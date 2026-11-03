@@ -1,0 +1,1708 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Ledger — Fraud Ring Detection</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,400;9..144,500;9..144,600;9..144,700&family=IBM+Plex+Sans:wght@400;500;600;700&family=IBM+Plex+Mono:wght@400;500&display=swap" rel="stylesheet">
+<script src="https://cdnjs.cloudflare.com/ajax/libs/d3/7.9.0/d3.min.js"></script>
+<style>
+:root{
+  --ink:#11152A;
+  --panel:#1A1F3B;
+  --panel-2:#212751;
+  --line:#333B66;
+  --text:#E9EAF4;
+  --muted:#9AA1C4;
+  --muted-2:#6E759C;
+  --amber:#E3A32C;
+  --clay:#C1503F;
+  --teal:#3EA88F;
+  --paper:#F3EEE1;
+  --paper-ink:#2B2313;
+  box-sizing:border-box;
+  padding-top:env(safe-area-inset-top,0px);
+  padding-bottom:env(safe-area-inset-bottom,0px);
+}
+@media (prefers-color-scheme: light){
+  :root:not([data-theme="dark"]){ }
+}
+*{box-sizing:border-box;}
+html{scroll-padding-top:env(safe-area-inset-top,0px); height:100%;}
+body{
+  height:100%;
+  margin:0;
+  background:var(--ink);
+  color:var(--text);
+  font-family:'IBM Plex Sans',system-ui,sans-serif;
+  -webkit-font-smoothing:antialiased;
+}
+.display{font-family:'Fraunces',serif;}
+.mono{font-family:'IBM Plex Mono',monospace;}
+
+/* ---------- layout ---------- */
+.app{
+  display:flex;
+  min-height:100%;
+}
+.sidebar{
+  position:fixed;
+  top:0; left:0; bottom:0;
+  width:242px;
+  background:linear-gradient(180deg,#151A34,#0F1327);
+  border-right:1px solid var(--line);
+  padding:24px 16px;
+  padding-top:calc(24px + env(safe-area-inset-top,0px));
+  padding-bottom:calc(24px + env(safe-area-inset-bottom,0px));
+  display:flex;
+  flex-direction:column;
+  gap:28px;
+  overflow-y:auto;
+  z-index:10;
+}
+.brand{display:flex; align-items:center; gap:10px; padding:0 6px;}
+.brand-mark{
+  width:34px;height:34px;border-radius:8px;
+  background:linear-gradient(145deg,var(--amber),var(--clay));
+  display:flex;align-items:center;justify-content:center;
+  font-family:'Fraunces',serif; font-weight:700; color:#1B1206; font-size:17px;
+  flex-shrink:0;
+}
+.brand-text .name{font-family:'Fraunces',serif; font-size:18px; font-weight:600; line-height:1.1;}
+.brand-text .tag{font-size:11px; color:var(--muted-2); letter-spacing:.02em;}
+
+.nav{display:flex; flex-direction:column; gap:2px;}
+.nav-item{
+  display:flex; align-items:center; gap:10px;
+  padding:10px 12px; border-radius:8px;
+  color:var(--muted); font-size:14px; font-weight:500;
+  cursor:pointer; border:1px solid transparent;
+  transition:background .15s, color .15s;
+  user-select:none;
+}
+.nav-item:hover{background:rgba(255,255,255,.04); color:var(--text);}
+.nav-item.active{
+  background:var(--panel-2);
+  color:var(--text);
+  border-color:var(--line);
+}
+.nav-item .dot{width:6px;height:6px;border-radius:50%; background:var(--muted-2); flex-shrink:0;}
+.nav-item.active .dot{background:var(--amber);}
+.nav-count{
+  margin-left:auto; font-family:'IBM Plex Mono',monospace; font-size:11px;
+  color:var(--muted-2); background:rgba(255,255,255,.05);
+  padding:1px 6px; border-radius:10px;
+}
+
+.sidebar-foot{margin-top:auto; padding:0 6px;}
+.sidebar-foot .live{
+  display:flex; align-items:center; gap:7px; font-size:12px; color:var(--muted-2);
+  padding:10px 0; border-top:1px solid var(--line);
+}
+.pulse{width:7px;height:7px;border-radius:50%; background:var(--teal); position:relative;}
+.pulse::after{
+  content:''; position:absolute; inset:-4px; border-radius:50%;
+  border:1px solid var(--teal); opacity:.6;
+  animation:pulse 2.4s ease-out infinite;
+}
+@keyframes pulse{0%{transform:scale(.6); opacity:.7;} 100%{transform:scale(1.8); opacity:0;}}
+
+.main{
+  margin-left:242px;
+  flex:1;
+  min-width:0;
+  padding:32px 40px 80px;
+  padding-top:calc(32px + env(safe-area-inset-top,0px));
+}
+.topbar{
+  display:flex; justify-content:space-between; align-items:flex-end;
+  margin-bottom:28px; flex-wrap:wrap; gap:14px;
+}
+.topbar h1{font-family:'Fraunces',serif; font-size:30px; font-weight:600; margin:0 0 4px;}
+.topbar p{margin:0; color:var(--muted); font-size:14px; max-width:56ch;}
+.case-id{
+  font-family:'IBM Plex Mono',monospace; font-size:12px; color:var(--muted-2);
+  border:1px solid var(--line); padding:6px 10px; border-radius:6px; white-space:nowrap;
+}
+
+.section{display:none;}
+.section.active{display:block; animation:fadein .35s ease;}
+@keyframes fadein{from{opacity:0; transform:translateY(4px);} to{opacity:1; transform:none;}}
+
+/* ---------- shared bits ---------- */
+.kpi-row{display:grid; grid-template-columns:repeat(4,1fr); gap:14px; margin-bottom:30px;}
+.kpi{
+  background:var(--panel); border:1px solid var(--line); border-radius:10px;
+  padding:18px 18px 16px;
+}
+.kpi .num{font-family:'Fraunces',serif; font-size:32px; font-weight:600; line-height:1;}
+.kpi .lbl{font-size:12.5px; color:var(--muted); margin-top:6px;}
+.kpi.warn .num{color:var(--amber);}
+.kpi.alert .num{color:var(--clay);}
+.kpi.ok .num{color:var(--teal);}
+
+.panel{
+  background:var(--panel); border:1px solid var(--line); border-radius:12px;
+  padding:22px;
+}
+.panel + .panel{margin-top:18px;}
+.panel h2{font-family:'Fraunces',serif; font-size:19px; font-weight:600; margin:0 0 4px;}
+.panel .sub{color:var(--muted); font-size:13px; margin:0 0 18px; max-width:64ch;}
+
+.grid-2{display:grid; grid-template-columns:1.3fr .9fr; gap:18px;}
+
+/* pipeline */
+.pipeline{display:flex; align-items:stretch; gap:0; overflow-x:auto; padding-bottom:6px;}
+.pl-step{
+  flex:1; min-width:126px; text-align:left; padding:14px 16px; position:relative;
+}
+.pl-step .n{font-family:'IBM Plex Mono',monospace; font-size:11px; color:var(--muted-2);}
+.pl-step .t{font-size:13.5px; font-weight:600; margin-top:4px; line-height:1.3;}
+.pl-step:not(:last-child)::after{
+  content:'';position:absolute; right:0; top:50%; transform:translateY(-50%);
+  width:1px; height:34px; background:var(--line);
+}
+
+/* category bars */
+.cat-bar-row{display:flex; align-items:center; gap:12px; margin-bottom:12px;}
+.cat-bar-row .cname{width:110px; font-size:13px; color:var(--muted); flex-shrink:0; text-transform:capitalize;}
+.cat-bar-track{flex:1; height:9px; background:var(--panel-2); border-radius:5px; overflow:hidden;}
+.cat-bar-fill{height:100%; border-radius:5px; background:linear-gradient(90deg,var(--teal),var(--amber));}
+.cat-bar-val{width:88px; text-align:right; font-family:'IBM Plex Mono',monospace; font-size:12px; color:var(--muted-2); flex-shrink:0;}
+
+/* claims table */
+.filters{display:flex; gap:8px; margin-bottom:16px; flex-wrap:wrap;}
+.ac-controls{display:flex; gap:10px; margin-bottom:14px; flex-wrap:wrap;}
+.ac-search{
+  flex:1; min-width:220px; background:var(--panel-2); border:1px solid var(--line); border-radius:8px;
+  padding:9px 12px; color:var(--text); font-family:'IBM Plex Sans',sans-serif; font-size:13px; outline:none;
+}
+.ac-search:focus{border-color:var(--amber);}
+.ac-search::placeholder{color:var(--muted-2);}
+.ac-select{
+  background:var(--panel-2); border:1px solid var(--line); border-radius:8px;
+  padding:9px 12px; color:var(--text); font-family:'IBM Plex Sans',sans-serif; font-size:13px; outline:none;
+}
+.ml-pill{
+  display:inline-flex; align-items:center; gap:6px; font-family:'IBM Plex Mono',monospace;
+  font-size:11.5px; padding:3px 8px; border-radius:5px; font-weight:500;
+}
+.ml-pill .b{width:6px; height:6px; border-radius:50%;}
+.ml-yes{background:rgba(193,80,63,.15); color:#E98F80;}
+.ml-yes .b{background:var(--clay);}
+.ml-no{background:rgba(62,168,143,.12); color:#7FCBB5;}
+.ml-no .b{background:var(--teal);}
+.final-status-pill{font-size:11.5px; padding:3px 9px; border-radius:20px; border:1px solid var(--line); white-space:nowrap;}
+.final-status-pill.hot{border-color:var(--clay); color:#E98F80;}
+.final-status-pill.cool{border-color:var(--teal); color:#7FCBB5;}
+.chip{
+  font-size:12.5px; padding:6px 12px; border-radius:20px; border:1px solid var(--line);
+  color:var(--muted); cursor:pointer; user-select:none; transition:.15s;
+  background:transparent;
+}
+.chip:hover{color:var(--text); border-color:var(--muted-2);}
+.chip.active{background:var(--panel-2); color:var(--text); border-color:var(--amber);}
+
+.tbl{width:100%; border-collapse:collapse; font-size:13.5px;}
+.tbl thead th{
+  text-align:left; font-weight:500; color:var(--muted-2); font-size:11.5px;
+  padding:0 10px 10px; border-bottom:1px solid var(--line);
+}
+.tbl tbody td{padding:12px 10px; border-bottom:1px solid rgba(255,255,255,.05); vertical-align:middle;}
+.tbl tbody tr{cursor:pointer; transition:background .12s;}
+.tbl tbody tr:hover{background:rgba(255,255,255,.03);}
+.rank{font-family:'IBM Plex Mono',monospace; color:var(--muted-2); font-size:12px;}
+.risk-pill{
+  display:inline-flex; align-items:center; gap:6px; font-family:'IBM Plex Mono',monospace;
+  font-size:12px; padding:3px 8px; border-radius:5px; font-weight:500;
+}
+.risk-pill .b{width:6px; height:6px; border-radius:50%;}
+.risk-high{background:rgba(193,80,63,.15); color:#E98F80;}
+.risk-high .b{background:var(--clay);}
+.risk-mid{background:rgba(227,163,44,.15); color:#F0C168;}
+.risk-mid .b{background:var(--amber);}
+.risk-low{background:rgba(62,168,143,.15); color:#7FCBB5;}
+.risk-low .b{background:var(--teal);}
+.status-badge{font-size:11.5px; padding:3px 9px; border-radius:20px; border:1px solid var(--line); color:var(--muted); text-transform:capitalize;}
+.status-flagged{border-color:var(--clay); color:#E98F80;}
+.tname{color:var(--text); font-weight:500;}
+.tsub{color:var(--muted-2); font-size:11.5px; margin-top:1px;}
+
+/* evidence / network cards */
+.net-card{
+  border:1px solid var(--line); border-radius:10px; padding:18px; margin-bottom:14px;
+  background:var(--panel-2);
+}
+.net-card.top{border-color:var(--clay);}
+.net-head{display:flex; justify-content:space-between; align-items:flex-start; gap:14px; margin-bottom:14px; flex-wrap:wrap;}
+.net-head .title{font-family:'Fraunces',serif; font-size:17px; font-weight:600;}
+.net-head .meta{color:var(--muted); font-size:12.5px; margin-top:2px;}
+.net-stat{text-align:right;}
+.net-stat .v{font-family:'Fraunces',serif; font-size:22px; font-weight:600;}
+.net-stat .l{font-size:11px; color:var(--muted-2);}
+.net-body{display:grid; grid-template-columns:1fr 1fr; gap:18px; align-items:center;}
+.evidence-list{list-style:none; margin:0; padding:0; display:flex; flex-direction:column; gap:7px;}
+.evidence-list li{
+  font-size:13px; color:var(--text); background:rgba(0,0,0,.18); border:1px solid var(--line);
+  padding:8px 11px; border-radius:7px; display:flex; align-items:center; gap:8px;
+}
+.evidence-list li::before{content:'—'; color:var(--amber); font-weight:600;}
+.claimant-tags{display:flex; flex-wrap:wrap; gap:6px; margin-top:10px;}
+.claimant-tag{font-size:11.5px; background:rgba(255,255,255,.05); border:1px solid var(--line); padding:3px 9px; border-radius:20px; color:var(--muted);}
+
+/* evidence log (paper) */
+.dossier{
+  background:var(--paper); color:var(--paper-ink); border-radius:10px; padding:22px 24px;
+  font-family:'IBM Plex Mono',monospace; font-size:12.5px; line-height:1.75;
+}
+.dossier .head{font-family:'Fraunces',serif; font-size:17px; font-weight:600; margin-bottom:10px; color:#231C0E;}
+.dossier hr{border:none; border-top:1px dashed #B8AD8E; margin:12px 0;}
+
+/* scoring formula */
+.factor-row{display:grid; grid-template-columns:150px 1fr 60px; gap:14px; align-items:center; padding:11px 0; border-bottom:1px solid rgba(255,255,255,.05);}
+.factor-row:last-child{border-bottom:none;}
+.factor-row .fname{font-size:13.5px; font-weight:500;}
+.factor-row .fdesc{font-size:12px; color:var(--muted-2); margin-top:2px;}
+.factor-track{height:7px; background:var(--panel-2); border-radius:4px; overflow:hidden;}
+.factor-fill{height:100%; background:var(--amber); border-radius:4px;}
+.factor-w{text-align:right; font-family:'IBM Plex Mono',monospace; font-size:13px; color:var(--muted);}
+
+/* scatter */
+.scatter-wrap{position:relative;}
+.legend{display:flex; gap:16px; font-size:12px; color:var(--muted); margin-bottom:10px;}
+.legend span{display:inline-flex; align-items:center; gap:6px;}
+.legend .sw{width:9px; height:9px; border-radius:50%;}
+
+/* drawer */
+.drawer-overlay{
+  position:fixed; inset:0; background:rgba(8,10,22,.6); backdrop-filter:blur(2px);
+  opacity:0; pointer-events:none; transition:opacity .2s; z-index:50;
+}
+.drawer-overlay.open{opacity:1; pointer-events:auto;}
+.drawer{
+  position:fixed; top:0; right:0; bottom:0; width:min(420px,92vw);
+  background:var(--panel); border-left:1px solid var(--line);
+  padding:26px; padding-top:calc(26px + env(safe-area-inset-top,0px));
+  padding-bottom:calc(26px + env(safe-area-inset-bottom,0px));
+  transform:translateX(100%); transition:transform .25s ease; z-index:51;
+  overflow-y:auto;
+}
+.drawer.open{transform:translateX(0);}
+.drawer-close{position:absolute; top:20px; right:20px; background:none; border:none; color:var(--muted); font-size:20px; cursor:pointer; line-height:1;}
+.drawer h3{font-family:'Fraunces',serif; font-size:21px; margin:0 0 2px;}
+.drawer .sub{color:var(--muted-2); font-size:12.5px; margin-bottom:20px;}
+.drawer dl{display:grid; grid-template-columns:1fr 1fr; gap:14px 10px; margin:0 0 20px;}
+.drawer dt{font-size:11px; color:var(--muted-2); text-transform:uppercase; letter-spacing:.03em;}
+.drawer dd{margin:2px 0 0; font-size:14px; font-weight:500;}
+
+/* analyze new claim */
+.analyze-grid{display:grid; grid-template-columns:1fr 1fr; gap:20px; align-items:start; min-width:0;}
+.analyze-grid > *{min-width:0;}
+.field{display:flex; flex-direction:column; gap:6px; margin-bottom:16px;}
+.field label{font-size:12px; color:var(--muted); font-weight:500;}
+.field label .opt{color:var(--muted-2); font-weight:400;}
+.field input, .field select, .field textarea{
+  background:var(--panel-2); border:1px solid var(--line); border-radius:8px;
+  padding:10px 12px; color:var(--text); font-family:'IBM Plex Sans',sans-serif;
+  font-size:13.5px; outline:none; transition:border-color .15s;
+  width:100%; min-width:0;
+}
+.field textarea{resize:vertical; font-family:inherit;}
+.field input:focus, .field select:focus, .field textarea:focus{border-color:var(--amber);}
+.field input::placeholder, .field textarea::placeholder{color:var(--muted-2);}
+.field-row{display:grid; grid-template-columns:1fr 1fr; gap:12px; min-width:0;}
+.field-row .field{min-width:0;}
+.panel form h2{font-family:'Fraunces',serif; font-size:16px; font-weight:600; margin:0 0 4px; padding-top:14px; border-top:1px solid var(--line);}
+.panel form h2:first-child{padding-top:0; border-top:none;}
+.panel form h2 .opt{font-family:'IBM Plex Sans',sans-serif; font-size:11.5px; font-weight:400; color:var(--muted-2);}
+.witness-row{display:grid; grid-template-columns:1fr 1fr 1fr auto; gap:8px; margin-bottom:10px; align-items:end;}
+.witness-row .field{margin-bottom:0;}
+.witness-remove{
+  background:rgba(193,80,63,.12); border:1px solid var(--clay); color:#F0A897;
+  border-radius:8px; width:38px; height:38px; cursor:pointer; font-size:16px; line-height:1;
+}
+.graph-box{
+  width:100%; height:260px; border:1px solid var(--line); border-radius:9px;
+  background:rgba(0,0,0,.15); margin-bottom:4px; overflow:hidden; position:relative;
+}
+.graph-box svg{width:100%; height:100%;}
+.graph-legend{display:flex; gap:12px; flex-wrap:wrap; font-size:11px; color:var(--muted-2); margin:8px 0 18px;}
+.graph-legend span{display:inline-flex; align-items:center; gap:5px;}
+.graph-legend .sw{width:9px; height:9px; border-radius:50%;}
+.analyze-btn{
+  width:100%; padding:13px 16px; border-radius:9px; border:none; cursor:pointer;
+  background:linear-gradient(135deg,var(--amber),var(--clay)); color:#1B1206;
+  font-family:'Fraunces',serif; font-size:15px; font-weight:600;
+  transition:opacity .15s, transform .1s; margin-top:4px;
+}
+.analyze-btn:hover{opacity:.92;}
+.analyze-btn:active{transform:scale(.99);}
+.analyze-btn:disabled{opacity:.5; cursor:not-allowed;}
+.analyze-hint{font-size:11.5px; color:var(--muted-2); margin-top:10px; line-height:1.5;}
+
+.result-card{
+  border:1px solid var(--line); border-radius:12px; padding:24px;
+  background:linear-gradient(180deg,var(--panel-2),var(--panel));
+  display:none;
+}
+.result-card.show{display:block; animation:fadein .35s ease;}
+.result-card.tier-high{border-color:var(--clay); box-shadow:0 0 0 1px rgba(193,80,63,.15);}
+.result-card.tier-mid{border-color:var(--amber); box-shadow:0 0 0 1px rgba(227,163,44,.12);}
+.result-card.tier-low{border-color:var(--teal); box-shadow:0 0 0 1px rgba(62,168,143,.12);}
+.result-head{display:flex; justify-content:space-between; align-items:flex-start; gap:16px; flex-wrap:wrap; margin-bottom:18px;}
+.result-score{display:flex; align-items:baseline; gap:12px;}
+.result-score .num{font-family:'Fraunces',serif; font-size:52px; font-weight:700; line-height:1;}
+.result-score .of100{font-size:14px; color:var(--muted-2);}
+.result-status{
+  font-family:'Fraunces',serif; font-size:15px; font-weight:600; padding:8px 16px;
+  border-radius:20px; white-space:nowrap;
+}
+.result-status.hot{background:rgba(193,80,63,.18); color:#F0A897; border:1px solid var(--clay);}
+.result-status.cool{background:rgba(62,168,143,.15); color:#8FD4BE; border:1px solid var(--teal);}
+.result-stats{display:grid; grid-template-columns:repeat(3,1fr); gap:12px; margin-bottom:20px;}
+.result-stats > *{min-width:0;}
+.result-stat{background:rgba(0,0,0,.18); border:1px solid var(--line); border-radius:9px; padding:12px 14px;}
+.result-stat .v{font-family:'Fraunces',serif; font-size:22px; font-weight:600;}
+.result-stat .l{font-size:11px; color:var(--muted-2); margin-top:2px;}
+.result-section-title{font-size:12.5px; font-weight:600; color:var(--muted); text-transform:uppercase; letter-spacing:.04em; margin:18px 0 10px;}
+.connected-row{
+  display:flex; justify-content:space-between; align-items:center; gap:10px;
+  padding:9px 12px; border-radius:7px; background:rgba(0,0,0,.16); border:1px solid var(--line);
+  margin-bottom:7px; font-size:13px;
+}
+.connected-row .cname{font-weight:500;}
+.connected-row .cmeta{color:var(--muted-2); font-size:11.5px;}
+.analyze-error{
+  border:1px solid var(--clay); background:rgba(193,80,63,.1); border-radius:9px;
+  padding:14px 16px; color:#F0A897; font-size:13px; margin-bottom:16px; display:none;
+}
+.analyze-error.show{display:block;}
+.analyze-loading{color:var(--muted-2); font-size:13px; display:none; align-items:center; gap:8px; margin-bottom:12px;}
+.analyze-loading.show{display:flex;}
+.spin{width:13px; height:13px; border-radius:50%; border:2px solid var(--line); border-top-color:var(--amber); animation:spin .7s linear infinite;}
+@keyframes spin{to{transform:rotate(360deg);}}
+
+.result-summary{
+  font-size:13.5px; color:var(--text); line-height:1.6; background:rgba(0,0,0,.15);
+  border:1px solid var(--line); border-radius:9px; padding:12px 14px; margin-bottom:20px;
+}
+.breakdown-item{margin-bottom:14px; padding-bottom:14px; border-bottom:1px solid rgba(255,255,255,.05);}
+.breakdown-item:last-child{border-bottom:none; margin-bottom:0; padding-bottom:0;}
+.breakdown-head{display:flex; justify-content:space-between; align-items:baseline; margin-bottom:6px; gap:10px;}
+.breakdown-head .bname{font-size:13.5px; font-weight:600;}
+.breakdown-head .bval{font-size:12px; color:var(--muted); margin-left:8px; font-weight:400;}
+.breakdown-head .bpts{font-family:'IBM Plex Mono',monospace; font-size:12.5px; color:var(--muted); white-space:nowrap;}
+.breakdown-track{height:6px; background:var(--panel-2); border-radius:3px; overflow:hidden; margin-bottom:6px;}
+.breakdown-fill{height:100%; border-radius:3px; background:var(--amber);}
+.breakdown-explain{font-size:12px; color:var(--muted-2); line-height:1.5;}
+.save-row{margin-top:20px; padding-top:18px; border-top:1px solid var(--line);}
+.save-btn{
+  width:100%; padding:12px 16px; border-radius:9px; border:1px solid var(--teal);
+  background:rgba(62,168,143,.12); color:#8FD4BE; font-family:'Fraunces',serif;
+  font-size:14.5px; font-weight:600; cursor:pointer; transition:background .15s, opacity .15s;
+}
+.save-btn:hover{background:rgba(62,168,143,.22);}
+.save-btn:disabled{opacity:.55; cursor:not-allowed;}
+.save-hint{font-size:11px; color:var(--muted-2); margin-top:8px; text-align:center; line-height:1.5;}
+.save-banner{
+  display:none; margin-top:14px; padding:12px 14px; border-radius:9px; font-size:13px; line-height:1.5;
+  background:rgba(62,168,143,.12); border:1px solid var(--teal); color:#8FD4BE;
+}
+.save-banner.show{display:block;}
+.save-banner.is-error{background:rgba(193,80,63,.12); border-color:var(--clay); color:#F0A897;}
+
+/* consistency / explanation helpers */
+.kpi .hint{font-size:11px; color:var(--muted-2); margin-top:4px; line-height:1.4;}
+.rule-box{font-size:12.5px; color:var(--muted); background:rgba(0,0,0,.16); border:1px dashed var(--line); border-radius:8px; padding:10px 12px; margin-bottom:14px; line-height:1.55;}
+.rule-box strong{color:var(--text);}
+.count-line{font-size:12px; color:var(--muted-2); margin:-4px 0 10px;}
+.rec-pill{font-size:11.5px; padding:3px 9px; border-radius:20px; border:1px solid var(--line); white-space:nowrap;}
+.rec-hot{border-color:var(--clay); color:#E98F80;}
+.rec-mid{border-color:var(--amber); color:#F0C168;}
+.rec-cool{border-color:var(--teal); color:#7FCBB5;}
+.rec-pending{border-style:dashed; color:var(--muted);}
+.ml-na{background:rgba(255,255,255,.06); color:var(--muted);}
+.ml-na .b{background:var(--muted-2);}
+.reason-list{margin:0 0 16px; padding-left:18px; font-size:13px; line-height:1.6; color:var(--text);}
+.link-btn{background:var(--panel-2); border:1px solid var(--line); color:var(--text); border-radius:8px; padding:8px 12px; font-size:12.5px; cursor:pointer; font-family:'IBM Plex Sans',sans-serif;}
+.link-btn:hover{border-color:var(--amber);}
+.btn-row{display:flex; gap:8px; flex-wrap:wrap; margin-top:14px;}
+.field input[readonly], .field input:disabled{opacity:.7; border-style:dashed; cursor:not-allowed;}
+.lock-note{font-size:12px; color:#8FD4BE; background:rgba(62,168,143,.1); border:1px solid var(--teal); border-radius:8px; padding:8px 11px; margin:-6px 0 14px; display:none; line-height:1.5;}
+.lock-note.show{display:block;}
+.lock-note.is-error{color:#F0A897; background:rgba(193,80,63,.1); border-color:var(--clay);}
+.claim-chip{display:inline-block; font-family:'IBM Plex Mono',monospace; font-size:11.5px; padding:2px 8px; margin:2px 3px 2px 0; border-radius:12px; border:1px solid var(--line); cursor:pointer; color:var(--text); background:rgba(255,255,255,.04);}
+.claim-chip:hover{border-color:var(--amber);}
+.claim-chip.focus{border-color:var(--amber); color:var(--amber);}
+.ent-type{font-family:'IBM Plex Mono',monospace; font-size:10.5px; text-transform:uppercase; letter-spacing:.04em; padding:1px 6px; border-radius:4px; margin-right:4px; color:#11152A;}
+.evidence-list li.ent{display:block;}
+.evidence-list li.ent::before{content:none;}
+.warn-box{border:1px solid var(--amber); background:rgba(227,163,44,.1); color:#F0C168; border-radius:9px; padding:12px 14px; font-size:13px; line-height:1.5; margin-bottom:16px;}
+.mini-stats{display:grid; grid-template-columns:repeat(4,1fr); gap:12px; margin-bottom:18px;}
+.ev-controls{display:flex; gap:10px; flex-wrap:wrap; align-items:center; margin-bottom:14px;}
+.graph-tip{position:absolute; pointer-events:none; background:#0F1327; border:1px solid var(--line); color:var(--text); font-size:11.5px; padding:6px 8px; border-radius:6px; max-width:260px; line-height:1.4; display:none; z-index:5;}
+
+/* mobile */
+@media (max-width: 880px){
+  .mini-stats{grid-template-columns:1fr 1fr;}
+  .analyze-grid{grid-template-columns:1fr;}
+  .field-row{grid-template-columns:1fr 1fr;}
+  .witness-row{grid-template-columns:1fr; gap:6px;}
+  .witness-remove{width:100%; height:34px;}
+  .result-stats{grid-template-columns:1fr 1fr;}
+  .sidebar{
+    width:100%; height:auto; position:fixed; top:auto; bottom:0; left:0; right:0;
+    flex-direction:row; align-items:center; padding:10px 12px;
+    padding-bottom:calc(10px + env(safe-area-inset-bottom,0px));
+    border-right:none; border-top:1px solid var(--line); gap:0; overflow-x:auto;
+  }
+  .brand,.sidebar-foot{display:none;}
+  .nav{flex-direction:row; gap:4px; width:100%;}
+  .nav-item{flex-direction:column; gap:4px; font-size:10.5px; padding:8px 10px; white-space:nowrap;}
+  .nav-item .dot{display:none;}
+  .nav-count{display:none;}
+  .main{margin-left:0; padding:22px 16px 96px;}
+  .kpi-row{grid-template-columns:1fr 1fr;}
+  .grid-2{grid-template-columns:1fr;}
+  .net-body{grid-template-columns:1fr;}
+  .tbl{font-size:12px;}
+  #claims-table thead th:nth-child(4), #claims-table tbody td:nth-child(4){display:none;}
+  #allclaims-table thead th:nth-child(5), #allclaims-table tbody td:nth-child(5){display:none;}
+  #allclaims-table thead th:nth-child(7), #allclaims-table tbody td:nth-child(7){display:none;}
+}
+::-webkit-scrollbar{width:8px; height:8px;}
+::-webkit-scrollbar-thumb{background:var(--line); border-radius:4px;}
+</style>
+</head>
+<body>
+
+<div class="app">
+  <aside class="sidebar">
+    <div class="brand">
+      <div class="brand-mark">L</div>
+      <div class="brand-text">
+        <div class="name">Ledger</div>
+        <div class="tag">Fraud Ring Detection</div>
+      </div>
+    </div>
+
+    <nav class="nav" id="nav">
+      <div class="nav-item active" data-target="overview"><span class="dot"></span>Overview<span class="nav-count" id="nc-overview"></span></div>
+      <div class="nav-item" data-target="allclaims"><span class="dot"></span>All claims<span class="nav-count" id="nc-allclaims"></span></div>
+      <div class="nav-item" data-target="claims"><span class="dot"></span>Suspicious claims<span class="nav-count" id="nc-claims"></span></div>
+      <div class="nav-item" data-target="networks"><span class="dot"></span>Fraud networks<span class="nav-count" id="nc-networks"></span></div>
+      <div class="nav-item" data-target="scoring"><span class="dot"></span>Risk scoring</div>
+      <div class="nav-item" data-target="ml"><span class="dot"></span>ML anomalies<span class="nav-count" id="nc-ml"></span></div>
+      <div class="nav-item" data-target="evidence"><span class="dot"></span>Evidence log</div>
+      <div class="nav-item" data-target="analyze"><span class="dot"></span>New claim</div>
+    </nav>
+
+    <div class="sidebar-foot">
+      <div class="live"><span class="pulse"></span><span id="last-run">Connecting to API…</span></div>
+    </div>
+  </aside>
+
+  <main class="main">
+
+    <!-- OVERVIEW -->
+    <section class="section active" id="sec-overview">
+      <div class="topbar">
+        <div>
+          <h1>Portfolio overview</h1>
+          <p>Every claim in PostgreSQL, scored by the same rules on every page. The demo data is synthetic, so averages and anomaly results describe this dataset only.</p>
+        </div>
+        <div class="case-id">DATASET · live PostgreSQL (synthetic demo)</div>
+      </div>
+
+      <div class="kpi-row">
+        <div class="kpi"><div class="num" id="k-total">—</div><div class="lbl">Total claims on file</div><div class="hint" id="k-total-hint"></div></div>
+        <div class="kpi alert"><div class="num" id="k-ri">—</div><div class="lbl">Requires investigation</div><div class="hint">Risk score ≥ <span class="th-ri">50</span></div></div>
+        <div class="kpi warn"><div class="num" id="k-ur">—</div><div class="lbl">Under review</div><div class="hint">Risk <span class="th-ur">35</span>–<span class="th-ri">50</span>, or ML anomaly with risk &lt; <span class="th-ri">50</span></div></div>
+        <div class="kpi ok"><div class="num" id="k-nets">—</div><div class="lbl">Connected claim networks</div><div class="hint" id="k-nets-hint"></div></div>
+      </div>
+
+      <div class="panel">
+        <h2>How a claim gets flagged</h2>
+        <p class="sub">Every claim moves through the same pipeline, from intake to a human decision. Nothing here is auto-declared as fraud.</p>
+        <div class="pipeline">
+          <div class="pl-step"><div class="n">01</div><div class="t">Claim &amp; entity data stored</div></div>
+          <div class="pl-step"><div class="n">02</div><div class="t">Shared garage, doctor, vehicle, witness, customer, phone, address matched</div></div>
+          <div class="pl-step"><div class="n">03</div><div class="t">Recursive CTE traces the full connected network</div></div>
+          <div class="pl-step"><div class="n">04</div><div class="t">Composite risk score calculated</div></div>
+          <div class="pl-step"><div class="n">05</div><div class="t">Isolation Forest checks for unusual claims</div></div>
+          <div class="pl-step"><div class="n">06</div><div class="t">Investigator reviews the evidence</div></div>
+        </div>
+      </div>
+
+      <div class="grid-2">
+        <div class="panel">
+          <h2>Exposure by category</h2>
+          <p class="sub">Total claimed amount per claim type (average risk score in brackets).</p>
+          <div id="cat-bars"></div>
+        </div>
+        <div class="panel">
+          <h2>Claimed value at stake</h2>
+          <p class="sub">Share of total portfolio value in claims recommended for review or investigation.</p>
+          <div id="value-donut"></div>
+        </div>
+      </div>
+    </section>
+
+    <!-- ALL CLAIMS -->
+    <section class="section" id="sec-allclaims">
+      <div class="topbar">
+        <div>
+          <h1>All claims</h1>
+          <p>Every claim on file in PostgreSQL — including claims with no immediate concern. Saved is saved, whether or not it's flagged.</p>
+        </div>
+      </div>
+      <div class="panel">
+        <div class="ac-controls">
+          <input type="text" id="ac-search" class="ac-search" placeholder="Search claim ID, customer ID or name, policy number, phone, VIN, garage, doctor…">
+          <select id="ac-rec" class="ac-select">
+            <option value="all">All recommendations</option>
+            <option>Requires Investigation</option>
+            <option>Under Review</option>
+            <option>No immediate concern</option>
+            <option>Analysis pending</option>
+          </select>
+          <select id="ac-status" class="ac-select">
+            <option value="all">All case statuses</option>
+            <option value="open">Open</option>
+            <option value="under_review">Under review</option>
+            <option value="flagged">Flagged</option>
+            <option value="closed">Closed</option>
+          </select>
+        </div>
+        <div class="filters" id="ac-filters"></div>
+        <div class="count-line" id="ac-count"></div>
+        <div style="overflow-x:auto;">
+        <table class="tbl" id="allclaims-table">
+          <thead>
+            <tr><th>Claim</th><th>Customer</th><th>Policy</th><th>Category</th><th>Amount</th><th>Premium</th><th>Risk</th><th>ML</th><th>Network</th><th>Recommendation</th><th>Case status</th></tr>
+          </thead>
+          <tbody id="allclaims-body"></tbody>
+        </table>
+        <div id="allclaims-empty" style="display:none; padding:30px 0; text-align:center; color:var(--muted-2); font-size:13px;">No claims match this search/filter.</div>
+        </div>
+      </div>
+    </section>
+
+    <!-- SUSPICIOUS CLAIMS -->
+    <section class="section" id="sec-claims">
+      <div class="topbar">
+        <div>
+          <h1>Suspicious claims</h1>
+          <p>A filtered view of <strong>All claims</strong>. "Suspicious" means "worth a human look", not confirmed fraud.</p>
+        </div>
+      </div>
+      <div class="panel">
+        <div class="rule-box" id="susp-rule"></div>
+        <div class="filters" id="filters"></div>
+        <div class="count-line" id="susp-count"></div>
+        <div style="overflow-x:auto;">
+        <table class="tbl" id="claims-table">
+          <thead>
+            <tr><th>#</th><th>Claimant</th><th>Category</th><th>Garage / doctor</th><th>Amount</th><th>Network</th><th>Risk</th><th>ML</th><th>Recommendation</th></tr>
+          </thead>
+          <tbody id="claims-body"></tbody>
+        </table>
+        </div>
+      </div>
+    </section>
+
+    <!-- NETWORKS -->
+    <section class="section" id="sec-networks">
+      <div class="topbar">
+        <div>
+          <h1>Fraud networks</h1>
+          <p>Connected components of claims that share a garage, doctor, vehicle, witness, customer record, phone or address — traced with a recursive SQL query until no further link exists. A shared attribute is evidence of association, not proof of fraud; a large network is not automatically suspicious.</p>
+        </div>
+      </div>
+      <div id="networks-list"></div>
+    </section>
+
+    <!-- SCORING -->
+    <section class="section" id="sec-scoring">
+      <div class="topbar">
+        <div>
+          <h1>Risk scoring</h1>
+          <p>Four weighted signals combine into a single 0–100 score. None of them alone is proof of fraud — together, they prioritize where an investigator should look first.</p>
+        </div>
+      </div>
+      <div class="panel">
+        <h2>Composite score, by factor</h2>
+        <p class="sub">Points per factor, each rounded to 0.1. The score is the exact sum of the four factor points.</p>
+        <div class="factor-row">
+          <div><div class="fname">Claim / premium ratio</div><div class="fdesc">35 × min(claim ÷ premium ÷ 8, 1). Missing premium → 0 points.</div></div>
+          <div class="factor-track"><div class="factor-fill" style="width:35%"></div></div>
+          <div class="factor-w">35 pts</div>
+        </div>
+        <div class="factor-row">
+          <div><div class="fname">Network size</div><div class="fdesc">25 × min((claims in connected component − 1) ÷ 5, 1)</div></div>
+          <div class="factor-track"><div class="factor-fill" style="width:25%"></div></div>
+          <div class="factor-w">25 pts</div>
+        </div>
+        <div class="factor-row">
+          <div><div class="fname">Garage frequency</div><div class="fdesc">20 × min(other claims using the same garage ÷ 5, 1)</div></div>
+          <div class="factor-track"><div class="factor-fill" style="width:20%"></div></div>
+          <div class="factor-w">20 pts</div>
+        </div>
+        <div class="factor-row">
+          <div><div class="fname">Category deviation</div><div class="fdesc">20 × min(max((amount − category avg) ÷ avg, 0) ÷ 2, 1). Needs ≥ 5 claims in the category.</div></div>
+          <div class="factor-track"><div class="factor-fill" style="width:20%"></div></div>
+          <div class="factor-w">20 pts</div>
+        </div>
+        <div class="rule-box" style="margin-top:14px;" id="rec-rule"></div>
+      </div>
+      <div class="panel">
+        <h2>Inspect one claim's score</h2>
+        <p class="sub">Shows the stored score next to the factor breakdown recomputed from the current database — they must match.</p>
+        <div class="ev-controls">
+          <input type="text" id="sc-claim" class="ac-search" style="max-width:220px;" placeholder="Claim ID, e.g. 14">
+          <button class="link-btn" id="sc-go">Show breakdown</button>
+        </div>
+        <div id="sc-result"></div>
+      </div>
+      <div class="panel">
+        <h2>Score distribution</h2>
+        <p class="sub">Where every analysed claim in the portfolio currently falls.</p>
+        <div id="score-hist"></div>
+      </div>
+    </section>
+
+    <!-- ML -->
+    <section class="section" id="sec-ml">
+      <div class="topbar">
+        <div>
+          <h1>ML anomaly detection</h1>
+          <p>An Isolation Forest scores every claim across six features at once. It measures how <em>unusual</em> a claim is compared with the rest of this portfolio — not the probability of fraud.</p>
+        </div>
+      </div>
+      <div class="mini-stats" id="ml-stats"></div>
+      <div class="rule-box" id="ml-config"></div>
+      <div class="panel">
+        <h2>Claim amount vs. claim/premium ratio</h2>
+        <p class="sub">Each point is one claim. The forest uses six features, so a flagged point can look ordinary on these two axes.</p>
+        <div class="legend">
+          <span><span class="sw" style="background:var(--clay)"></span>Anomalous (score &gt; threshold)</span>
+          <span><span class="sw" style="background:var(--muted-2)"></span>Not anomalous</span>
+        </div>
+        <div class="scatter-wrap" id="scatter"></div>
+      </div>
+      <div class="panel">
+        <h2>Top anomalies</h2>
+        <p class="sub">Sorted by anomaly score (higher = more unusual). The bar starts at the threshold.</p>
+        <div id="anomaly-list"></div>
+      </div>
+    </section>
+
+    <!-- EVIDENCE LOG -->
+    <section class="section" id="sec-evidence">
+      <div class="topbar">
+        <div>
+          <h1>Evidence log</h1>
+          <p>A plain-language case file for one network or one claim, built from the current database.</p>
+        </div>
+      </div>
+      <div class="ev-controls">
+        <select id="ev-network" class="ac-select"></select>
+        <span style="color:var(--muted-2); font-size:12.5px;">or claim</span>
+        <input type="text" id="ev-claim" class="ac-search" style="max-width:180px;" placeholder="Claim ID">
+        <button class="link-btn" id="ev-go">Open claim</button>
+      </div>
+      <div class="count-line" id="ev-label"></div>
+      <div class="dossier" id="dossier"></div>
+    </section>
+
+    <!-- NEW INSURANCE CLAIM -->
+    <section class="section" id="sec-analyze">
+      <div class="topbar">
+        <div>
+          <h1>File a new insurance claim</h1>
+          <p>Saves a real claim to PostgreSQL in one transaction, then runs the full pipeline: shared-entity
+          detection, recursive CTE network tracing, weighted risk scoring and the Isolation Forest.</p>
+        </div>
+      </div>
+
+      <div class="analyze-grid">
+        <div class="panel">
+          <form id="claim-form" novalidate>
+
+            <h2>Customer</h2>
+            <p class="sub">Enter an existing customer ID to file under that customer (their stored details are shown read-only), or leave it blank and fill in the details to create a new customer.</p>
+            <div class="field">
+              <label for="cf-claimant-id">Existing customer ID <span class="opt">(optional — leave blank for a new customer)</span></label>
+              <input type="text" inputmode="numeric" id="cf-claimant-id" placeholder="e.g. 12" list="dl-claimants" autocomplete="off">
+              <datalist id="dl-claimants"></datalist>
+            </div>
+            <div class="lock-note" id="cust-note"></div>
+            <div class="field-row">
+              <div class="field"><label for="cf-name">Full name</label><input type="text" id="cf-name" placeholder="e.g. Anjali Rao" maxlength="120"></div>
+              <div class="field"><label for="cf-phone">Phone</label><input type="text" id="cf-phone" placeholder="e.g. 9812345678" maxlength="20"></div>
+            </div>
+            <div class="field-row">
+              <div class="field"><label for="cf-address">Address</label><input type="text" id="cf-address" placeholder="e.g. 22 Lake View" maxlength="255"></div>
+              <div class="field"><label for="cf-dob">Date of birth <span class="opt">(optional)</span></label><input type="date" id="cf-dob"></div>
+            </div>
+
+            <h2 style="margin-top:22px;">Policy</h2>
+            <div class="field-row">
+              <div class="field"><label for="cf-policy-number">Policy number <span class="opt">(optional — auto-generated; an existing policy of this customer is reused)</span></label><input type="text" id="cf-policy-number" placeholder="e.g. POL-2026-001" list="dl-policies" maxlength="40" autocomplete="off"><datalist id="dl-policies"></datalist></div>
+              <div class="field"><label for="cf-premium">Premium (₹)</label><input type="number" id="cf-premium" step="0.01" min="0.01" placeholder="e.g. 5200"></div>
+            </div>
+            <div class="lock-note" id="pol-note"></div>
+            <div class="field-row">
+              <div class="field"><label for="cf-start">Policy start date</label><input type="date" id="cf-start"></div>
+              <div class="field"><label for="cf-end">Policy end date <span class="opt">(optional)</span></label><input type="date" id="cf-end"></div>
+            </div>
+
+            <h2 style="margin-top:22px;">Claim</h2>
+            <div class="field-row">
+              <div class="field"><label for="cf-amount">Claim amount (₹)</label><input type="number" id="cf-amount" step="0.01" min="0.01" placeholder="e.g. 48000"></div>
+              <div class="field">
+                <label for="cf-category">Category</label>
+                <select id="cf-category">
+                  <option value="">Select a category…</option>
+                  <option value="collision">Collision</option>
+                  <option value="medical">Medical</option>
+                  <option value="theft">Theft</option>
+                  <option value="fire">Fire</option>
+                  <option value="water_damage">Water damage</option>
+                </select>
+              </div>
+            </div>
+            <div class="field">
+              <label for="cf-incident-date">Incident date <span class="opt">(must fall inside the policy period, not in the future)</span></label>
+              <input type="date" id="cf-incident-date">
+            </div>
+            <div class="field">
+              <label for="cf-description">Claim description <span class="opt">(optional)</span></label>
+              <textarea id="cf-description" rows="3" placeholder="What happened?"></textarea>
+            </div>
+
+            <h2 style="margin-top:22px;">Vehicle <span class="opt">(optional)</span></h2>
+            <div class="field">
+              <label for="cf-vehicle-id">Existing vehicle ID <span class="opt">(optional)</span></label>
+              <input type="text" inputmode="numeric" id="cf-vehicle-id" placeholder="e.g. 901" list="dl-vehicles" autocomplete="off">
+              <datalist id="dl-vehicles"></datalist>
+            </div>
+            <div class="field-row">
+              <div class="field"><label for="cf-vin">VIN <span class="opt">(matches an existing vehicle, or creates a new one)</span></label><input type="text" id="cf-vin" placeholder="e.g. VIN901" maxlength="32"></div>
+              <div class="field"><label for="cf-plate">Plate number</label><input type="text" id="cf-plate" placeholder="e.g. KA05RG901" maxlength="20"></div>
+            </div>
+            <div class="field-row">
+              <div class="field"><label for="cf-make">Make</label><input type="text" id="cf-make" placeholder="e.g. Toyota" maxlength="60"></div>
+              <div class="field"><label for="cf-model">Model</label><input type="text" id="cf-model" placeholder="e.g. Sedan" maxlength="60"></div>
+            </div>
+
+            <h2 style="margin-top:22px;">Garage <span class="opt">(optional)</span></h2>
+            <div class="field">
+              <label for="cf-garage-id">Existing garage ID <span class="opt">(optional)</span></label>
+              <input type="text" inputmode="numeric" id="cf-garage-id" placeholder="e.g. 99" list="dl-garages" autocomplete="off">
+              <datalist id="dl-garages"></datalist>
+            </div>
+            <div class="field"><label for="cf-garage-name">Garage name <span class="opt">(creates a new garage if no ID given)</span></label><input type="text" id="cf-garage-name" placeholder="e.g. QuickFix Auto Care" maxlength="150"></div>
+            <div class="field-row">
+              <div class="field"><label for="cf-garage-phone">Garage phone <span class="opt">(optional)</span></label><input type="text" id="cf-garage-phone" maxlength="20"></div>
+              <div class="field"><label for="cf-garage-address">Garage address <span class="opt">(optional)</span></label><input type="text" id="cf-garage-address" maxlength="255"></div>
+            </div>
+
+            <h2 style="margin-top:22px;">Doctor <span class="opt">(optional)</span></h2>
+            <div class="field">
+              <label for="cf-doctor-id">Existing doctor ID <span class="opt">(optional)</span></label>
+              <input type="text" inputmode="numeric" id="cf-doctor-id" placeholder="e.g. 99" list="dl-doctors" autocomplete="off">
+              <datalist id="dl-doctors"></datalist>
+            </div>
+            <div class="field-row">
+              <div class="field"><label for="cf-doctor-name">Doctor name <span class="opt">(creates a new doctor if no ID given)</span></label><input type="text" id="cf-doctor-name" placeholder="e.g. Dr. R. Kulkarni" maxlength="120"></div>
+              <div class="field"><label for="cf-doctor-clinic">Clinic <span class="opt">(optional)</span></label><input type="text" id="cf-doctor-clinic" maxlength="150"></div>
+            </div>
+
+            <h2 style="margin-top:22px;">Witnesses <span class="opt">(optional, one or more)</span></h2>
+            <div id="witness-rows"></div>
+            <button type="button" class="chip" id="add-witness" style="margin-bottom:16px;">+ Add a witness</button>
+            <datalist id="dl-witnesses"></datalist>
+
+            <div class="analyze-loading" id="analyze-loading"><span class="spin"></span>Saving claim and running the full detection pipeline…</div>
+            <div class="analyze-error" id="analyze-error"></div>
+            <button type="submit" class="analyze-btn" id="analyze-btn">Submit claim</button>
+            <div class="analyze-hint" id="analyze-hint">The claim is saved in a single database transaction. A success message appears only after that commit; analysis runs afterwards and can be retried without creating a second claim.</div>
+          </form>
+        </div>
+
+        <div class="result-card" id="result-card"></div>
+      </div>
+    </section>
+
+  </main>
+</div>
+
+<div class="drawer-overlay" id="overlay"></div>
+<div class="drawer" id="drawer">
+  <button class="drawer-close" id="drawer-close">×</button>
+  <div id="drawer-content"></div>
+</div>
+
+<script>
+// ---------- data source: live Flask API ----------
+// Override with ?api=http://host:port in the URL if the backend isn't on the default local port.
+const API_BASE = new URLSearchParams(location.search).get('api') || 'http://127.0.0.1:5000';
+const REC = {RI:'Requires Investigation', UR:'Under Review', NONE:'No immediate concern', PENDING:'Analysis pending'};
+
+let summary = {}, claims = [], networks = [], category_breakdown = {}, entities = {claimants:[],vehicles:[],garages:[],doctors:[],witnesses:[]};
+
+async function fetchJSON(path){
+  const res = await fetch(API_BASE + path);
+  const data = await res.json().catch(()=>({}));
+  if(!res.ok) throw new Error(data.error || `${path} responded with HTTP ${res.status}`);
+  return data;
+}
+
+async function loadData(){
+  const [s, c, n, cb, ent] = await Promise.all([
+    fetchJSON('/api/summary'),
+    fetchJSON('/api/claims'),
+    fetchJSON('/api/networks'),
+    fetchJSON('/api/category-breakdown'),
+    fetchJSON('/api/entities'),
+  ]);
+  summary = s; claims = c; networks = n; category_breakdown = cb; entities = ent;
+}
+
+// ---------- helpers ----------
+const esc = s => String(s ?? '').replace(/[&<>"']/g, ch => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[ch]));
+const fmt = n => n == null ? '—' : '₹' + Number(n).toLocaleString('en-IN', {maximumFractionDigits:0});
+const TH = () => summary.thresholds || {review_threshold:35, investigation_threshold:50, high_risk_threshold:70};
+const riskClass = s => s == null ? 'ml-na' : s>=TH().high_risk_threshold ? 'risk-high' : s>=TH().investigation_threshold ? 'risk-mid' : 'risk-low';
+const riskPill = s => `<span class="risk-pill ${riskClass(s)}"><span class="b"></span>${s == null ? 'n/a' : s}</span>`;
+const mlPill = c => c.ml_anomaly == null
+  ? '<span class="ml-pill ml-na"><span class="b"></span>Unavailable</span>'
+  : `<span class="ml-pill ${c.ml_anomaly?'ml-yes':'ml-no'}"><span class="b"></span>${c.ml_anomaly?'Anomalous':'Not anomalous'}</span>`;
+const recClass = r => r===REC.RI ? 'rec-hot' : r===REC.UR ? 'rec-mid' : r===REC.NONE ? 'rec-cool' : 'rec-pending';
+const recPill = r => `<span class="rec-pill ${recClass(r)}">${esc(r)}</span>`;
+const isSuspicious = c => c.recommendation===REC.RI || c.recommendation===REC.UR;
+const catLabel = c => String(c||'').replace(/_/g,' ');
+const netCell = c => c.network_size>1 ? `${c.network_size} claims <span class="tsub">${esc(c.network_id)}</span>` : '—';
+const claimChip = (id, focus) => `<span class="claim-chip${focus?' focus':''}" data-claim="${id}">#${id}</span>`;
+
+// clicking any claim chip anywhere opens that claim's drawer
+document.addEventListener('click', e=>{
+  const chip = e.target.closest('[data-claim]');
+  if(chip){ e.preventDefault(); openDrawer(Number(chip.dataset.claim)); }
+});
+
+function goTo(target){
+  document.querySelectorAll('.nav-item').forEach(n=>n.classList.toggle('active', n.dataset.target===target));
+  document.querySelectorAll('.section').forEach(s=>s.classList.toggle('active', s.id==='sec-'+target));
+  window.scrollTo({top:0});
+}
+document.querySelectorAll('.nav-item').forEach(item=> item.addEventListener('click', ()=> goTo(item.dataset.target)));
+if(document.getElementById('sec-'+location.hash.slice(1))) goTo(location.hash.slice(1));
+
+// ---------- reusable D3 claim<->entity graph ----------
+const GRAPH_COLORS = {claim:'#E3A32C', garage:'#3EA88F', doctor:'#7A9CE0', vehicle:'#C77DD1', witness:'#E98F80', customer:'#B9BEDD', phone:'#F0C868', address:'#6FD1D6'};
+const GRAPH_LABELS = {garage:'Garage', doctor:'Doctor', vehicle:'Vehicle', witness:'Witness', customer:'Same customer', phone:'Phone', address:'Address'};
+function graphLegend(){
+  return `<div class="graph-legend">${Object.entries(GRAPH_COLORS).map(([k,c])=>
+    `<span><span class="sw" style="background:${c}; border-radius:${k==='claim'?'50%':'2px'}"></span>${k==='claim'?'Claim':GRAPH_LABELS[k]}</span>`).join('')}</div>`;
+}
+function renderEntityGraph(container, graph, focusClaimId){
+  container.innerHTML = '';
+  if(typeof d3 === 'undefined'){
+    container.innerHTML = '<div style="display:flex; align-items:center; justify-content:center; height:100%; color:var(--muted-2); font-size:12px; text-align:center; padding:0 16px;">Graph library failed to load (no internet access to the CDN). The shared-entity list beside it shows the same relationships.</div>';
+    return;
+  }
+  if(!graph || !graph.nodes || graph.nodes.length < 2){
+    container.innerHTML = '<div style="display:flex; align-items:center; justify-content:center; height:100%; color:var(--muted-2); font-size:12.5px;">No shared entities — nothing to connect</div>';
+    return;
+  }
+  const width = container.clientWidth || 400, height = container.clientHeight || 260;
+  const nodes = graph.nodes.map(d=>({...d}));
+  const links = graph.edges.map(d=>({...d}));
+  const crowded = nodes.length > 22;
+
+  const tip = document.createElement('div');
+  tip.className = 'graph-tip';
+  container.appendChild(tip);
+  const svg = d3.select(container).append('svg').attr('viewBox', `0 0 ${width} ${height}`);
+  const g = svg.append('g');
+  svg.call(d3.zoom().scaleExtent([0.3,3]).on('zoom', (ev)=> g.attr('transform', ev.transform)));
+
+  const sim = d3.forceSimulation(nodes)
+    .force('link', d3.forceLink(links).id(d=>d.id).distance(crowded ? 45 : 65).strength(0.8))
+    .force('charge', d3.forceManyBody().strength(crowded ? -110 : -180))
+    .force('center', d3.forceCenter(width/2, height/2))
+    .force('collide', d3.forceCollide(crowded ? 14 : 22));
+
+  const link = g.append('g').selectAll('line').data(links).join('line')
+    .attr('stroke', d=> GRAPH_COLORS[d.type] || 'rgba(255,255,255,.25)')
+    .attr('stroke-opacity', 0.6).attr('stroke-width', 1.6);
+
+  const node = g.append('g').selectAll('g').data(nodes).join('g')
+    .style('cursor', d=> d.type==='claim' ? 'pointer' : 'default')
+    .call(d3.drag()
+      .on('start', (ev,d)=>{ if(!ev.active) sim.alphaTarget(0.3).restart(); d.fx=d.x; d.fy=d.y; })
+      .on('drag', (ev,d)=>{ d.fx=ev.x; d.fy=ev.y; })
+      .on('end', (ev,d)=>{ if(!ev.active) sim.alphaTarget(0); d.fx=null; d.fy=null; }));
+
+  // claims are circles, shared entities are squares, so the two node kinds can't be confused
+  node.filter(d=>d.type==='claim').append('circle')
+    .attr('r', d=> d.claim_id===focusClaimId ? 11 : 8)
+    .attr('fill', GRAPH_COLORS.claim)
+    .attr('stroke', d=> d.claim_id===focusClaimId ? '#fff' : '#0F1327').attr('stroke-width', d=> d.claim_id===focusClaimId ? 2.5 : 1.5);
+  node.filter(d=>d.type!=='claim').append('rect')
+    .attr('x',-6).attr('y',-6).attr('width',12).attr('height',12).attr('rx',2)
+    .attr('fill', d=> GRAPH_COLORS[d.type] || '#999').attr('stroke', '#0F1327').attr('stroke-width', 1.5);
+
+  node.append('text')
+    .text(d=> d.type==='claim' ? d.label : (crowded ? '' : (d.label.length > 24 ? d.label.slice(0,22)+'…' : d.label)))
+    .attr('x', 11).attr('y', 4)
+    .attr('font-size', d=> d.type==='claim' ? 10.5 : 9.5).attr('font-family', 'IBM Plex Sans, sans-serif')
+    .attr('fill', d=> d.type==='claim' ? '#F3E2B8' : '#C9CDE6');
+
+  node.on('mouseenter', (ev,d)=>{ tip.textContent = d.detail || d.label; tip.style.display = 'block'; })
+      .on('mousemove', (ev)=>{ const r = container.getBoundingClientRect(); tip.style.left = (ev.clientX - r.left + 12)+'px'; tip.style.top = (ev.clientY - r.top + 12)+'px'; })
+      .on('mouseleave', ()=>{ tip.style.display = 'none'; })
+      .on('click', (ev,d)=>{ if(d.type==='claim') openDrawer(d.claim_id); });
+
+  const pad = 14;
+  sim.on('tick', ()=>{
+    // keep big components inside the viewBox instead of drifting off-screen
+    nodes.forEach(d=>{ d.x = Math.max(pad, Math.min(width-pad, d.x)); d.y = Math.max(pad, Math.min(height-pad, d.y)); });
+    link.attr('x1', d=>d.source.x).attr('y1', d=>d.source.y).attr('x2', d=>d.target.x).attr('y2', d=>d.target.y);
+    node.attr('transform', d=>`translate(${d.x},${d.y})`);
+  });
+}
+
+// ---------- shared renderers (used by New Claim, drawer, Risk Scoring and Evidence Log) ----------
+function entityItems(list, focusId){
+  if(!list || !list.length) return '<li style="opacity:.6;">No shared entities</li>';
+  return list.map(e=>`<li class="ent"><span class="ent-type" style="background:${GRAPH_COLORS[e.type]||'#999'}">${esc(e.type_label)}</span>${esc(e.label)}
+    <div style="margin-top:4px;">${e.claim_ids.map(id=>claimChip(id, id===focusId)).join('')}</div></li>`).join('');
+}
+function renderBreakdown(risk){
+  if(!risk) return '';
+  const rows = risk.breakdown.map(f=>{
+    const pct = f.max_points ? (f.points / f.max_points * 100).toFixed(0) : 0;
+    const color = f.points >= f.max_points ? 'var(--clay)' : f.points > 0 ? 'var(--amber)' : 'var(--teal)';
+    return `<div class="breakdown-item">
+        <div class="breakdown-head">
+          <span class="bname">${esc(f.factor)}<span class="bval">${esc(f.value)}</span></span>
+          <span class="bpts">${f.points} / ${f.max_points} pts</span>
+        </div>
+        <div class="breakdown-track"><div class="breakdown-fill" style="width:${pct}%; background:${color};"></div></div>
+        <div class="breakdown-explain">${esc(f.explanation)}</div>
+      </div>`;
+  }).join('');
+  const sum = risk.breakdown.map(f=>f.points).join(' + ');
+  const check = risk.score == null
+    ? '<span style="color:var(--amber)">No stored score yet (analysis pending).</span>'
+    : risk.consistent
+      ? `Stored score <strong>${risk.score}</strong> matches.`
+      : `<span style="color:var(--clay)">Stored score ${risk.score} differs — the data changed since the last analysis; re-run analysis.</span>`;
+  return rows + `<div class="rule-box" style="margin-top:12px;">Total = ${sum} = <strong>${risk.breakdown_total}</strong>. ${check}</div>`;
+}
+function mlText(ml){
+  if(!ml || !ml.available) return 'Unavailable';
+  return ml.anomaly ? 'Anomalous' : 'Not anomalous';
+}
+function connectedRows(list){
+  if(!list.length) return '<div style="color:var(--muted-2); font-size:13px;">No connected claims — this claim stands alone.</div>';
+  return list.map(c=>`
+    <div class="connected-row" data-claim="${c.claim_id}" style="cursor:pointer;">
+      <div><div class="cname">#${c.claim_id} · ${esc(c.claimant)} <span class="cmeta">(customer #${c.claimant_id})</span></div>
+      <div class="cmeta">${c.relation==='direct' ? 'Direct link' : `Indirect — ${c.hops} hops`} · ${esc(catLabel(c.category))} · ${fmt(c.amount)}</div></div>
+      <div style="text-align:right;">${riskPill(c.risk_score)}<div style="margin-top:4px;">${recPill(c.recommendation)}</div></div>
+    </div>`).join('');
+}
+
+// ---------- drawer (claim detail from /api/claims/<id>) ----------
+const overlay = document.getElementById('overlay');
+const drawer = document.getElementById('drawer');
+overlay.addEventListener('click', closeDrawer);
+document.getElementById('drawer-close').addEventListener('click', closeDrawer);
+function closeDrawer(){ overlay.classList.remove('open'); drawer.classList.remove('open'); }
+async function openDrawer(claimId){
+  const wrap = document.getElementById('drawer-content');
+  wrap.innerHTML = `<div class="analyze-loading show"><span class="spin"></span>Loading claim #${claimId}…</div>`;
+  overlay.classList.add('open'); drawer.classList.add('open');
+  try{
+    const r = await fetchJSON(`/api/claims/${claimId}`);
+    const c = r.claim;
+    wrap.innerHTML = `
+      <h3>Claim #${c.claim_id}</h3>
+      <div class="sub">${esc(c.claimant)} · customer #${c.claimant_id} · policy ${esc(c.policy_number)} · incident ${c.incident_date}</div>
+      <div style="margin-bottom:14px;">${recPill(r.recommendation)}</div>
+      <ul class="reason-list">${r.recommendation_reasons.map(x=>`<li>${esc(x)}</li>`).join('')}</ul>
+      <dl>
+        <div><dt>Claim amount</dt><dd>${fmt(c.amount)}</dd></div>
+        <div><dt>Policy premium</dt><dd>${fmt(c.premium)}</dd></div>
+        <div><dt>Phone</dt><dd style="font-weight:400;">${esc(c.phone)}</dd></div>
+        <div><dt>Address</dt><dd style="font-weight:400;">${esc(c.address)}</dd></div>
+        <div><dt>Category</dt><dd style="text-transform:capitalize;">${esc(catLabel(c.category))}</dd></div>
+        <div><dt>Case status</dt><dd style="text-transform:capitalize;">${esc(catLabel(c.status))}</dd></div>
+        <div><dt>Garage</dt><dd style="font-weight:400;">${c.garage_id ? `#${c.garage_id} ${esc(c.garage_name)}` : '—'}</dd></div>
+        <div><dt>Doctor</dt><dd style="font-weight:400;">${c.doctor_id ? `#${c.doctor_id} ${esc(c.doctor_name)}` : '—'}</dd></div>
+        <div><dt>Vehicle</dt><dd style="font-weight:400;">${c.vehicle_id ? `#${c.vehicle_id} ${esc(c.vin)}` : '—'}</dd></div>
+        <div><dt>Witnesses</dt><dd style="font-weight:400;">${c.witness_ids.length ? c.witness_ids.map(w=>'#'+w).join(', ') : '—'}</dd></div>
+        <div><dt>Risk score</dt><dd>${riskPill(c.risk_score)}</dd></div>
+        <div><dt>ML</dt><dd>${mlPill(c)} ${c.ml_anomaly_score != null ? `<span class="tsub">score ${c.ml_anomaly_score} / threshold ${r.ml.threshold}</span>` : ''}</dd></div>
+        <div><dt>Network</dt><dd>${r.network.size>1 ? `${esc(r.network.network_id)} · ${r.network.size} claims` : 'Not connected'}</dd></div>
+      </dl>
+      ${c.analysis_error ? `<div class="warn-box">Last analysis attempt failed: ${esc(c.analysis_error)}</div>` : ''}
+      <div class="result-section-title">Factor breakdown</div>
+      ${renderBreakdown(r.risk)}
+      <div class="result-section-title">Shared entities in this network</div>
+      <ul class="evidence-list">${entityItems(r.network.shared_entities, c.claim_id)}</ul>
+      <div class="result-section-title">Connected claims</div>
+      ${connectedRows(r.network.connected_claims)}
+      <div class="btn-row">
+        <button class="link-btn" id="dr-evidence">Open investigation report</button>
+        <button class="link-btn" id="dr-all">Show in All claims</button>
+      </div>`;
+    document.getElementById('dr-evidence').onclick = ()=>{ closeDrawer(); showClaimEvidence(c.claim_id); };
+    document.getElementById('dr-all').onclick = ()=>{ closeDrawer(); showInAllClaims(c.claim_id); };
+  }catch(err){
+    wrap.innerHTML = `<div class="analyze-error show">${esc(err.message)}</div>`;
+  }
+}
+
+function showInAllClaims(claimId){
+  document.getElementById('ac-search').value = String(claimId);
+  acState.q = String(claimId);
+  document.getElementById('ac-rec').value = 'all'; acState.rec = 'all';
+  document.getElementById('ac-status').value = 'all'; acState.status = 'all';
+  acState.category = 'all'; renderAcFilters();
+  goTo('allclaims');
+  refreshAllClaims();
+}
+
+// ---------- everything below reads the loaded data ----------
+function renderDashboard(){
+  const th = TH();
+  document.querySelectorAll('.th-ri').forEach(e=>e.textContent = th.investigation_threshold);
+  document.querySelectorAll('.th-ur').forEach(e=>e.textContent = th.review_threshold);
+
+  // KPIs and sidebar counters — all from /api/summary, which applies the same rules as each page
+  document.getElementById('k-total').textContent = summary.total_claims;
+  document.getElementById('k-total-hint').textContent = summary.pending_analysis
+    ? `${summary.pending_analysis} awaiting analysis` : `${summary.analysed_claims} analysed`;
+  document.getElementById('k-ri').textContent = summary.requires_investigation;
+  document.getElementById('k-ur').textContent = summary.under_review;
+  document.getElementById('k-nets').textContent = summary.total_networks;
+  document.getElementById('k-nets-hint').textContent = `${summary.claims_in_networks} distinct claims; largest has ${summary.largest_network}`;
+  document.getElementById('nc-overview')?.remove();
+  document.getElementById('nc-allclaims').textContent = summary.total_claims;
+  document.getElementById('nc-claims').textContent = summary.suspicious_claims;
+  document.getElementById('nc-networks').textContent = summary.total_networks;
+  document.getElementById('nc-ml').textContent = summary.ml_anomalies;
+  document.getElementById('last-run').textContent = summary.last_run
+    ? `Last analysis ${summary.last_run.run_at}` : 'Not analysed yet';
+  if(claims.length !== summary.total_claims) console.warn('claims list and summary disagree', claims.length, summary.total_claims);
+
+  renderCategoryBars();
+  renderDonut();
+  renderSuspicious();
+  renderAcFilters();
+  refreshAllClaims();
+  renderNetworks();
+  renderScoringPage();
+  renderMlPage();
+  renderEvidenceControls();
+}
+
+function renderCategoryBars(){
+  const catWrap = document.getElementById('cat-bars');
+  const vals = Object.values(category_breakdown);
+  const maxCatTotal = Math.max(1, ...vals.map(c=>c.total));
+  catWrap.innerHTML = Object.entries(category_breakdown).map(([cat,c])=>`
+    <div class="cat-bar-row">
+      <div class="cname">${esc(catLabel(cat))}</div>
+      <div class="cat-bar-track"><div class="cat-bar-fill" style="width:${(c.total/maxCatTotal*100).toFixed(1)}%"></div></div>
+      <div class="cat-bar-val">${fmt(c.total)} <span style="opacity:.7">(${c.avg_risk ?? '—'})</span></div>
+    </div>`).join('');
+}
+
+function renderDonut(){
+  const pct = summary.total_claim_value ? summary.flagged_value / summary.total_claim_value : 0;
+  const r = 54, c = 2*Math.PI*r;
+  document.getElementById('value-donut').innerHTML = `
+  <div style="display:flex; align-items:center; gap:22px; flex-wrap:wrap;">
+    <svg width="140" height="140" viewBox="0 0 140 140">
+      <circle cx="70" cy="70" r="${r}" fill="none" stroke="var(--panel-2)" stroke-width="14"/>
+      <circle cx="70" cy="70" r="${r}" fill="none" stroke="var(--amber)" stroke-width="14"
+        stroke-dasharray="${c}" stroke-dashoffset="${c*(1-pct)}" stroke-linecap="round" transform="rotate(-90 70 70)"/>
+      <text x="70" y="66" text-anchor="middle" font-family="Fraunces,serif" font-size="22" font-weight="600" fill="var(--text)">${Math.round(pct*100)}%</text>
+      <text x="70" y="84" text-anchor="middle" font-family="IBM Plex Sans,sans-serif" font-size="10.5" fill="var(--muted-2)">suspicious</text>
+    </svg>
+    <div style="flex:1; min-width:150px;">
+      <div style="font-family:'Fraunces',serif; font-size:20px; font-weight:600;">${fmt(summary.total_claim_value)}</div>
+      <div style="font-size:12px; color:var(--muted-2); margin-bottom:10px;">total claimed value (${summary.total_claims} claims)</div>
+      <div style="font-family:'Fraunces',serif; font-size:20px; font-weight:600; color:var(--amber);">${fmt(summary.flagged_value)}</div>
+      <div style="font-size:12px; color:var(--muted-2);">in ${summary.suspicious_claims} claims marked Under Review or Requires Investigation</div>
+    </div>
+  </div>`;
+}
+
+// ---------- suspicious claims ----------
+let suspCategory = 'all';
+function renderSuspicious(){
+  const th = TH();
+  document.getElementById('susp-rule').innerHTML = `<strong>Filtering rule:</strong> claims whose recommendation is
+    <strong>Requires Investigation</strong> (risk ≥ ${th.investigation_threshold}) or <strong>Under Review</strong>
+    (risk ${th.review_threshold}–${th.investigation_threshold}, or flagged by the Isolation Forest). The sidebar count uses the same rule.
+    A claim missing here is still saved — see All claims.`;
+  const all = claims.filter(isSuspicious);
+  const cats = [...new Set(all.map(c=>c.category))].sort();
+  const filtersWrap = document.getElementById('filters');
+  filtersWrap.innerHTML = '';
+  ['all', ...cats].forEach(f=>{
+    const el = document.createElement('div');
+    el.className = 'chip' + (f===suspCategory ? ' active' : '');
+    el.textContent = f==='all' ? 'All categories' : catLabel(f);
+    el.addEventListener('click', ()=>{ suspCategory = f; renderSuspicious(); });
+    filtersWrap.appendChild(el);
+  });
+  const list = all.filter(c=> suspCategory==='all' || c.category===suspCategory)
+                  .sort((a,b)=> (b.risk_score??-1) - (a.risk_score??-1) || b.claim_id - a.claim_id);
+  document.getElementById('susp-count').textContent = `${list.length} of ${all.length} suspicious claims shown (${claims.length} claims in total).`;
+  const body = document.getElementById('claims-body');
+  body.innerHTML = list.map((c,i)=>`
+    <tr data-row="${c.claim_id}">
+      <td class="rank">${i+1}</td>
+      <td><div class="tname">${esc(c.claimant)}</div><div class="tsub">Claim #${c.claim_id} · customer #${c.claimant_id}</div></td>
+      <td style="text-transform:capitalize;">${esc(catLabel(c.category))}</td>
+      <td><div class="tname" style="font-weight:400; font-size:12.5px;">${esc(c.garage_name || '—')}</div><div class="tsub">${esc(c.doctor_name || '—')}</div></td>
+      <td class="mono">${fmt(c.amount)}</td>
+      <td>${netCell(c)}</td>
+      <td>${riskPill(c.risk_score)}</td>
+      <td>${mlPill(c)}</td>
+      <td>${recPill(c.recommendation)}</td>
+    </tr>`).join('');
+  body.querySelectorAll('tr').forEach(tr=> tr.addEventListener('click', ()=> openDrawer(Number(tr.dataset.row))));
+}
+
+// ---------- all claims (server-side search, so the API and the page use one search rule) ----------
+const acState = {q:'', category:'all', status:'all', rec:'all'};
+let acTimer = null, acSeq = 0;
+function renderAcFilters(){
+  const wrap = document.getElementById('ac-filters');
+  const cats = [...new Set(claims.map(c=>c.category))].sort();
+  wrap.innerHTML = '';
+  ['all', ...cats].forEach(f=>{
+    const el = document.createElement('div');
+    el.className = 'chip' + (f===acState.category ? ' active' : '');
+    el.textContent = f==='all' ? 'All categories' : catLabel(f);
+    el.addEventListener('click', ()=>{ acState.category = f; renderAcFilters(); refreshAllClaims(); });
+    wrap.appendChild(el);
+  });
+}
+async function refreshAllClaims(){
+  const seq = ++acSeq;
+  const filtered = acState.q || acState.category!=='all' || acState.status!=='all' || acState.rec!=='all';
+  let list = claims;
+  if(filtered){
+    const p = new URLSearchParams({q:acState.q, category:acState.category, status:acState.status, recommendation:acState.rec});
+    try{ list = await fetchJSON('/api/claims?' + p.toString()); }
+    catch(err){ document.getElementById('ac-count').textContent = 'Search failed: ' + err.message; return; }
+    if(seq !== acSeq) return; // a newer search already started
+  }
+  document.getElementById('ac-count').textContent = filtered
+    ? `${list.length} of ${claims.length} claims match.` : `${claims.length} claims, newest first.`;
+  document.getElementById('allclaims-empty').style.display = list.length ? 'none' : 'block';
+  const body = document.getElementById('allclaims-body');
+  body.innerHTML = list.map(c=>`
+    <tr data-row="${c.claim_id}">
+      <td class="mono">#${c.claim_id}</td>
+      <td><div class="tname">${esc(c.claimant)}</div><div class="tsub">Customer #${c.claimant_id}</div></td>
+      <td class="mono" style="font-size:12px;">${esc(c.policy_number)}</td>
+      <td style="text-transform:capitalize;">${esc(catLabel(c.category))}</td>
+      <td class="mono">${fmt(c.amount)}</td>
+      <td class="mono">${fmt(c.premium)}</td>
+      <td>${riskPill(c.risk_score)}</td>
+      <td>${mlPill(c)}</td>
+      <td>${netCell(c)}</td>
+      <td>${recPill(c.recommendation)}</td>
+      <td><span class="status-badge ${c.status==='flagged'?'status-flagged':''}">${esc(catLabel(c.status))}</span></td>
+    </tr>`).join('');
+  body.querySelectorAll('tr').forEach(tr=> tr.addEventListener('click', ()=> openDrawer(Number(tr.dataset.row))));
+}
+document.getElementById('ac-search').addEventListener('input', e=>{
+  acState.q = e.target.value.trim();
+  clearTimeout(acTimer); acTimer = setTimeout(refreshAllClaims, 200);
+});
+document.getElementById('ac-status').addEventListener('change', e=>{ acState.status = e.target.value; refreshAllClaims(); });
+document.getElementById('ac-rec').addEventListener('change', e=>{ acState.rec = e.target.value; refreshAllClaims(); });
+
+// ---------- networks ----------
+function renderNetworks(){
+  const netWrap = document.getElementById('networks-list');
+  if(!networks.length){ netWrap.innerHTML = '<div class="panel">No connected networks — no two claims share an entity.</div>'; return; }
+  netWrap.innerHTML = networks.map((n,idx)=>`
+    <div class="net-card${idx===0 ? ' top' : ''}">
+      <div class="net-head">
+        <div>
+          <div class="title">Network ${esc(n.network_id)} — ${n.size} distinct claims</div>
+          <div class="meta">${n.claimants.length} customer record(s) · avg risk ${n.avg_risk_score ?? '—'} · max risk ${n.max_risk_score ?? '—'} · ${n.ml_anomalies} ML anomal${n.ml_anomalies===1?'y':'ies'}</div>
+          <div class="meta">${Object.entries(n.recommendation_counts).map(([k,v])=>`${v} ${esc(k)}`).join(' · ')}</div>
+        </div>
+        <div class="net-stat"><div class="v">${fmt(n.total_amount)}</div><div class="l">combined exposure</div></div>
+      </div>
+      <div style="margin-bottom:12px;">${n.claim_ids.map(id=>claimChip(id)).join('')}</div>
+      <div class="net-body">
+        <ul class="evidence-list" style="max-height:260px; overflow:auto;">${entityItems(n.shared_entities)}</ul>
+        <div>
+          <div class="graph-box" id="net-graph-${idx}" style="height:240px;"></div>
+          ${graphLegend()}
+        </div>
+      </div>
+      <div class="btn-row"><button class="link-btn" data-evnet="${esc(n.network_id)}">Open case file in Evidence log</button></div>
+    </div>`).join('');
+  networks.forEach((n,idx)=>{
+    try { renderEntityGraph(document.getElementById(`net-graph-${idx}`), n.graph); }
+    catch(e) { console.error('graph render failed', e); }
+  });
+  netWrap.querySelectorAll('[data-evnet]').forEach(b=> b.addEventListener('click', ()=>{
+    document.getElementById('ev-network').value = b.dataset.evnet;
+    showNetworkEvidence(b.dataset.evnet);
+    goTo('evidence');
+  }));
+}
+
+// ---------- risk scoring page ----------
+function renderScoringPage(){
+  const th = TH();
+  document.getElementById('rec-rule').innerHTML = `<strong>Final recommendation rule:</strong>
+    Requires Investigation if risk ≥ ${th.investigation_threshold}.
+    Under Review if risk is ${th.review_threshold}–${th.investigation_threshold}, or if the Isolation Forest marks the claim as unusual (an ML flag alone never goes higher than Under Review).
+    Otherwise No immediate concern. The recommendation is guidance for an investigator, never a fraud verdict.`;
+  const scored = claims.filter(c=>c.risk_score != null);
+  const buckets = [0,0,0,0,0];
+  scored.forEach(c=>{ buckets[Math.min(4, Math.floor(c.risk_score/20))]++; });
+  const max = Math.max(1, ...buckets);
+  const labels = ['0–20','20–40','40–60','60–80','80–100'];
+  const colors = ['var(--teal)','var(--teal)','var(--amber)','var(--amber)','var(--clay)'];
+  document.getElementById('score-hist').innerHTML = '<div style="display:flex; align-items:flex-end; gap:14px; height:150px; padding-top:10px;">'
+    + buckets.map((b,i)=>`<div style="flex:1; display:flex; flex-direction:column; align-items:center; gap:8px;">
+      <div class="mono" style="font-size:12px; color:var(--muted);">${b}</div>
+      <div style="width:100%; height:${b/max*120}px; background:${colors[i]}; border-radius:5px 5px 2px 2px;"></div>
+      <div style="font-size:11px; color:var(--muted-2);">${labels[i]}</div></div>`).join('')
+    + `</div><div class="count-line" style="margin-top:10px;">${scored.length} analysed claims${claims.length-scored.length ? `, ${claims.length-scored.length} pending` : ''}.</div>`;
+}
+async function showScoring(claimId){
+  const out = document.getElementById('sc-result');
+  out.innerHTML = '<div class="analyze-loading show"><span class="spin"></span>Loading…</div>';
+  try{
+    const r = await fetchJSON(`/api/claims/${claimId}`);
+    out.innerHTML = `<div style="margin-bottom:10px;"><strong>Claim #${r.claim.claim_id}</strong> — ${esc(r.claim.claimant)} (customer #${r.claim.claimant_id}) · ${recPill(r.recommendation)}</div>` + renderBreakdown(r.risk);
+  }catch(err){ out.innerHTML = `<div class="analyze-error show">${esc(err.message)}</div>`; }
+}
+document.getElementById('sc-go').addEventListener('click', ()=>{
+  const id = parseInt(document.getElementById('sc-claim').value.replace('#',''), 10);
+  if(id) showScoring(id);
+});
+
+// ---------- ML page ----------
+function renderMlPage(){
+  const run = summary.last_run || {};
+  const m = summary.model || {};
+  document.getElementById('ml-stats').innerHTML = `
+    <div class="kpi"><div class="num">${summary.ml_evaluated}</div><div class="lbl">Claims evaluated</div></div>
+    <div class="kpi alert"><div class="num">${summary.ml_anomalies}</div><div class="lbl">Flagged anomalous</div><div class="hint">${summary.ml_evaluated ? Math.round(summary.ml_anomalies/summary.ml_evaluated*100) : 0}% of evaluated</div></div>
+    <div class="kpi"><div class="num">${summary.ml_unavailable}</div><div class="lbl">Prediction unavailable</div><div class="hint">${esc(run.ml_unavailable_reason || (summary.ml_unavailable ? 'awaiting analysis' : ''))}</div></div>
+    <div class="kpi"><div class="num">${run.ml_threshold ?? '—'}</div><div class="lbl">Anomaly threshold</div><div class="hint">contamination = ${esc(m.contamination)}</div></div>`;
+  document.getElementById('ml-config').innerHTML = `<strong>What the model sees:</strong> ${esc((m.features||[]).join(', '))}.
+    <strong>Preprocessing:</strong> ${esc(m.preprocessing)}. <strong>Score:</strong> ${esc(m.score_meaning)}. ${esc(m.threshold_note)}
+    The forest is refit on the whole portfolio at every analysis run (${m.n_estimators} trees, random_state ${m.random_state}), so adding a claim can change other claims' scores.
+    An anomaly is a claim that looks unusual for <em>this</em> synthetic dataset — it is not confirmed fraud.`;
+
+  const pts = claims.filter(c=>c.ratio != null);
+  const W = 640, H = 300, PAD = 40;
+  const maxAmt = Math.max(1, ...pts.map(c=>c.amount));
+  const maxRatio = Math.max(1, ...pts.map(c=>c.ratio));
+  document.getElementById('scatter').innerHTML = `
+    <svg width="100%" viewBox="0 0 ${W} ${H}" style="overflow:visible;">
+      <line x1="${PAD}" y1="${H-PAD}" x2="${W-10}" y2="${H-PAD}" stroke="var(--line)"/>
+      <line x1="${PAD}" y1="10" x2="${PAD}" y2="${H-PAD}" stroke="var(--line)"/>
+      <text x="${PAD}" y="${H-14}" font-size="11" fill="var(--muted-2)" font-family="IBM Plex Mono,monospace">ratio 0</text>
+      <text x="${W-110}" y="${H-14}" font-size="11" fill="var(--muted-2)" font-family="IBM Plex Mono,monospace">ratio ${maxRatio.toFixed(1)}×</text>
+      <text x="6" y="20" font-size="11" fill="var(--muted-2)" font-family="IBM Plex Mono,monospace">${fmt(maxAmt)}</text>
+      ${pts.map(c=>{
+        const x = PAD + (c.ratio/maxRatio)*(W-PAD*1.5), y = H-PAD - (c.amount/maxAmt)*(H-PAD*1.5);
+        const col = c.ml_anomaly ? 'var(--clay)' : 'var(--muted-2)';
+        return `<circle cx="${x.toFixed(1)}" cy="${y.toFixed(1)}" r="5" fill="${col}" opacity="${c.ml_anomaly?0.9:0.45}" style="cursor:pointer" data-claim="${c.claim_id}"><title>Claim #${c.claim_id} · ${esc(c.claimant)} · score ${c.ml_anomaly_score ?? 'n/a'}</title></circle>`;
+      }).join('')}
+    </svg>`;
+
+  const thr = run.ml_threshold ?? 0.5;
+  const top = claims.filter(c=>c.ml_anomaly).sort((a,b)=>b.ml_anomaly_score-a.ml_anomaly_score);
+  const maxScore = Math.max(thr + 0.01, ...top.map(c=>c.ml_anomaly_score));
+  document.getElementById('anomaly-list').innerHTML = top.length ? top.map(c=>`
+    <div class="factor-row" style="cursor:pointer;" data-claim="${c.claim_id}">
+      <div><div class="fname">#${c.claim_id} ${esc(c.claimant)}</div><div class="fdesc">${fmt(c.amount)} · risk ${c.risk_score} · ${esc(c.recommendation)}</div></div>
+      <div class="factor-track"><div class="factor-fill" style="width:${((c.ml_anomaly_score-thr)/(maxScore-thr)*100).toFixed(0)}%; background:var(--clay);"></div></div>
+      <div class="factor-w">${c.ml_anomaly_score}</div>
+    </div>`).join('') : '<div style="color:var(--muted-2); font-size:13px;">No claims flagged.</div>';
+}
+
+// ---------- evidence log ----------
+function renderEvidenceControls(){
+  const sel = document.getElementById('ev-network');
+  const prev = sel.value;
+  sel.innerHTML = networks.map((n,i)=>`<option value="${esc(n.network_id)}">${i===0?'Highest avg risk: ':''}Network ${esc(n.network_id)} · ${n.size} claims · avg risk ${n.avg_risk_score ?? '—'}</option>`).join('');
+  if(!networks.length){ document.getElementById('dossier').innerHTML = 'No multi-claim networks detected. Enter a claim ID to open a single-claim case file.'; return; }
+  if(currentEvidence.type==='claim'){ showClaimEvidence(currentEvidence.id); return; }
+  const keep = networks.find(n=>n.network_id===prev) ? prev : networks[0].network_id;
+  sel.value = keep;
+  showNetworkEvidence(keep);
+}
+let currentEvidence = {type:'network', id:null};
+document.getElementById('ev-network').addEventListener('change', e=> showNetworkEvidence(e.target.value));
+document.getElementById('ev-go').addEventListener('click', ()=>{
+  const id = parseInt(document.getElementById('ev-claim').value.replace('#',''), 10);
+  if(id) showClaimEvidence(id);
+});
+function showNetworkEvidence(networkId){
+  const n = networks.find(x=>x.network_id===networkId);
+  if(!n) return;
+  currentEvidence = {type:'network', id:networkId};
+  document.getElementById('ev-label').textContent = (networks[0].network_id===networkId
+    ? 'Showing the network with the highest average risk score. ' : '') + `Selected case: Network ${networkId}. Use the selector to inspect other networks or a single claim.`;
+  document.getElementById('dossier').innerHTML = `
+    <div class="head">Case file — Network ${esc(n.network_id)}</div>
+    RECOMMENDATIONS: ${Object.entries(n.recommendation_counts).map(([k,v])=>`${v} × ${esc(k)}`).join(', ')}<br>
+    CLAIMS INVOLVED (${n.size} distinct): ${n.claim_ids.map(i=>'#'+i).join(', ')}<br>
+    CUSTOMERS: ${n.claimants.map(c=>`${esc(c.name)} (#${c.claimant_id})`).join(', ')}<br>
+    COMBINED EXPOSURE: ${fmt(n.total_amount)}<br>
+    AVERAGE / MAX RISK SCORE: ${n.avg_risk_score ?? '—'} / ${n.max_risk_score ?? '—'} · ML ANOMALIES: ${n.ml_anomalies}
+    <hr>
+    CLAIMS<br>
+    ${n.claims.map(c=>`· #${c.claim_id} ${esc(c.claimant)} (customer #${c.claimant_id}) — ${esc(catLabel(c.category))}, ${fmt(c.amount)}, risk ${c.risk_score ?? 'n/a'}, ML ${c.ml_anomaly==null?'unavailable':c.ml_anomaly?'anomalous':'not anomalous'} → ${esc(c.recommendation)}`).join('<br>')}
+    <hr>
+    SHARED ENTITIES (each links the listed claims directly)<br>
+    ${n.evidence_readable.map(e=>'· '+esc(e)).join('<br>')}
+    <hr>
+    NOTE<br>
+    These claims are connected through the shared entities above, directly or through other claims in the list.
+    Shared attributes show association, not wrongdoing; review each claim's own risk factors and documents before drawing conclusions.`;
+}
+async function showClaimEvidence(claimId){
+  currentEvidence = {type:'claim', id:claimId};
+  goTo('evidence');
+  document.getElementById('ev-claim').value = claimId;
+  const wrap = document.getElementById('dossier');
+  wrap.innerHTML = 'Loading…';
+  try{
+    const r = await fetchJSON(`/api/claims/${claimId}`);
+    const c = r.claim, n = r.network;
+    document.getElementById('ev-label').textContent = `Selected case: Claim #${c.claim_id}${n.size>1 ? ` (member of Network ${n.network_id})` : ''}.`;
+    wrap.innerHTML = `
+      <div class="head">Case file — Claim #${c.claim_id}</div>
+      RECOMMENDATION: ${esc(r.recommendation)}<br>
+      ${r.recommendation_reasons.map(x=>'· '+esc(x)).join('<br>')}<br>
+      CUSTOMER: ${esc(c.claimant)} (customer #${c.claimant_id}) · phone ${esc(c.phone)} · address ${esc(c.address)}<br>
+      POLICY: ${esc(c.policy_number)} · premium ${fmt(c.premium)} · ${c.policy_start} to ${c.policy_end || 'open-ended'}<br>
+      CLAIM: ${esc(catLabel(c.category))}, ${fmt(c.amount)}, incident ${c.incident_date} · case status ${esc(catLabel(c.status))}<br>
+      RISK SCORE: ${c.risk_score ?? 'pending'} = ${r.risk.breakdown.map(f=>`${f.points} (${esc(f.factor.toLowerCase())})`).join(' + ')}<br>
+      ML: ${mlText(r.ml)}${r.ml.score != null ? ` — score ${r.ml.score}, threshold ${r.ml.threshold}` : ''}
+      <hr>
+      NETWORK: ${n.size>1 ? `${esc(n.network_id)}, ${n.size} distinct claims: ${n.claim_ids.map(i=>'#'+i).join(', ')}` : 'not connected to any other claim'}<br>
+      ${n.size>1 ? `DIRECT LINKS: ${n.direct_claim_ids.map(i=>'#'+i).join(', ') || 'none'}<br>INDIRECT (through other claims): ${n.indirect_claim_ids.map(i=>'#'+i).join(', ') || 'none'}<br>` : ''}
+      <hr>
+      THIS CLAIM'S SHARED ENTITIES<br>
+      ${n.direct_shared_entities.length ? n.direct_shared_entities.map(e=>'· '+esc(`${e.type_label} — ${e.label} — claims ${e.claim_ids.map(i=>'#'+i).join(', ')}`)).join('<br>') : 'None.'}
+      ${n.shared_entities.length > n.direct_shared_entities.length ? `<hr>OTHER LINKS INSIDE THE NETWORK<br>${n.shared_entities.filter(e=>!e.claim_ids.includes(c.claim_id)).map(e=>'· '+esc(`${e.type_label} — ${e.label} — claims ${e.claim_ids.map(i=>'#'+i).join(', ')}`)).join('<br>')}` : ''}`;
+  }catch(err){
+    document.getElementById('ev-label').textContent = '';
+    wrap.innerHTML = esc(err.message);
+  }
+}
+
+// ---------- new claim ----------
+function initClaimForm(){
+  const form = document.getElementById('claim-form');
+  const btn = document.getElementById('analyze-btn');
+  const loading = document.getElementById('analyze-loading');
+  const errorBox = document.getElementById('analyze-error');
+  const resultCard = document.getElementById('result-card');
+  const witnessRows = document.getElementById('witness-rows');
+  const $ = id => document.getElementById(id);
+
+  function val(id){
+    const el = $(id);
+    if(!el || el.disabled) return null;
+    const v = el.value.trim();
+    return v === '' ? null : v;
+  }
+  const newKey = () => (window.crypto && crypto.randomUUID) ? crypto.randomUUID()
+    : 'k-' + Date.now().toString(36) + '-' + Math.random().toString(36).slice(2);
+  // One key per intended claim: retries after a network error reuse it, so the
+  // server returns the already-saved claim instead of creating a second one.
+  let submissionKey = null, savedClaimId = null;
+
+  function fillDatalist(dlId, items, fmtFn){
+    const dl = $(dlId);
+    if(dl) dl.innerHTML = items.map(it => `<option value="${it.id}">${esc(fmtFn(it))}</option>`).join('');
+  }
+  function populateEntityPickers(){
+    fillDatalist('dl-claimants', entities.claimants.map(c=>({id:c.claimant_id, ...c})), c=>`${c.full_name} · ${c.phone}`);
+    fillDatalist('dl-vehicles', entities.vehicles.map(v=>({id:v.vehicle_id, ...v})), v=>`${v.vin}${v.plate_number ? ' ('+v.plate_number+')' : ''}`);
+    fillDatalist('dl-garages', entities.garages.map(g=>({id:g.garage_id, ...g})), g=>`${g.name}${g.address ? ' · '+g.address : ''}`);
+    fillDatalist('dl-doctors', entities.doctors.map(d=>({id:d.doctor_id, ...d})), d=>`${d.full_name}${d.clinic_name ? ' · '+d.clinic_name : ''}`);
+    fillDatalist('dl-witnesses', entities.witnesses.map(w=>({id:w.witness_id, ...w})), w=>w.full_name);
+  }
+  window.populateEntityPickers = populateEntityPickers;
+  populateEntityPickers();
+
+  // ---- existing customer: show stored details read-only ----
+  const custFields = ['cf-name','cf-phone','cf-address','cf-dob'];
+  let customerPolicies = [];
+  function setCustomerLocked(locked){
+    custFields.forEach(id=>{ $(id).readOnly = locked; });
+  }
+  async function onCustomerId(){
+    const raw = $('cf-claimant-id').value.trim().replace('#','');
+    const note = $('cust-note');
+    customerPolicies = [];
+    $('dl-policies').innerHTML = '';
+    if(!raw){
+      if($('cf-name').readOnly){ custFields.forEach(id=> $(id).value = ''); }
+      setCustomerLocked(false);
+      note.className = 'lock-note';
+      onPolicyNumber();
+      return;
+    }
+    try{
+      const c = await fetchJSON(`/api/customers/${encodeURIComponent(raw)}`);
+      $('cf-name').value = c.full_name; $('cf-phone').value = c.phone;
+      $('cf-address').value = c.address; $('cf-dob').value = c.date_of_birth || '';
+      setCustomerLocked(true);
+      customerPolicies = c.policies;
+      $('dl-policies').innerHTML = c.policies.map(p=>`<option value="${esc(p.policy_number)}">premium ${p.premium} · ${p.start_date}–${p.end_date||'open'} · ${p.claims} claim(s)</option>`).join('');
+      note.className = 'lock-note show';
+      note.innerHTML = `Filing for <strong>customer #${c.claimant_id} — ${esc(c.full_name)}</strong>. These are the stored details the analysis will use; they are read-only here.
+        To file for a different person, clear the ID and enter their details as a new customer.
+        ${c.policies.length ? `Existing policies: ${c.policies.map(p=>esc(p.policy_number)).join(', ')} (type one to reuse it, or a new number for a new policy).` : ''}`;
+    }catch(err){
+      setCustomerLocked(false);
+      note.className = 'lock-note show is-error';
+      note.textContent = err.message + ' Clear the ID to create a new customer.';
+    }
+    onPolicyNumber();
+  }
+  $('cf-claimant-id').addEventListener('change', onCustomerId);
+
+  // ---- reusing an existing policy of the selected customer fills its stored terms ----
+  const polFields = ['cf-premium','cf-start','cf-end'];
+  function onPolicyNumber(){
+    const num = ($('cf-policy-number').value || '').trim().toUpperCase();
+    const p = customerPolicies.find(x=>x.policy_number.toUpperCase()===num);
+    const note = $('pol-note');
+    if(p){
+      $('cf-premium').value = p.premium; $('cf-start').value = p.start_date; $('cf-end').value = p.end_date || '';
+      polFields.forEach(id=> $(id).readOnly = true);
+      note.className = 'lock-note show';
+      note.textContent = `Reusing policy ${p.policy_number} (stored premium and dates shown read-only).`;
+    }else{
+      if($('cf-premium').readOnly) polFields.forEach(id=> $(id).value = '');
+      polFields.forEach(id=> $(id).readOnly = false);
+      note.className = 'lock-note';
+    }
+  }
+  $('cf-policy-number').addEventListener('input', onPolicyNumber);
+
+  // ---- an entity ID disables that entity's "new record" fields, so nothing typed is silently ignored ----
+  function bindIdToFields(idInput, fieldIds){
+    const sync = ()=>{ const has = !!$(idInput).value.trim(); fieldIds.forEach(f=>{ $(f).disabled = has; }); };
+    $(idInput).addEventListener('input', sync);
+    sync();
+  }
+  bindIdToFields('cf-vehicle-id', ['cf-vin','cf-plate','cf-make','cf-model']);
+  bindIdToFields('cf-garage-id', ['cf-garage-name','cf-garage-phone','cf-garage-address']);
+  bindIdToFields('cf-doctor-id', ['cf-doctor-name','cf-doctor-clinic']);
+
+  function addWitnessRow(){
+    const row = document.createElement('div');
+    row.className = 'witness-row';
+    row.innerHTML = `
+      <div class="field"><label>Existing witness ID</label><input type="text" inputmode="numeric" class="w-id" placeholder="e.g. 901" list="dl-witnesses" autocomplete="off"></div>
+      <div class="field"><label>Full name (new)</label><input type="text" class="w-name" placeholder="e.g. Elena Chopra" maxlength="120"></div>
+      <div class="field"><label>Phone <span class="opt">(optional)</span></label><input type="text" class="w-phone" placeholder="optional" maxlength="20"></div>
+      <button type="button" class="witness-remove" title="Remove">×</button>`;
+    const idIn = row.querySelector('.w-id');
+    idIn.addEventListener('input', ()=>{ const has = !!idIn.value.trim(); row.querySelector('.w-name').disabled = has; row.querySelector('.w-phone').disabled = has; });
+    row.querySelector('.witness-remove').addEventListener('click', ()=> row.remove());
+    witnessRows.appendChild(row);
+  }
+  $('add-witness').addEventListener('click', addWitnessRow);
+  addWitnessRow();
+
+  function collectWitnesses(){
+    return [...witnessRows.querySelectorAll('.witness-row')].map(row=>{
+      const wid = row.querySelector('.w-id').value.trim();
+      const name = row.querySelector('.w-name').disabled ? '' : row.querySelector('.w-name').value.trim();
+      const phone = row.querySelector('.w-phone').disabled ? '' : row.querySelector('.w-phone').value.trim();
+      if(!wid && !name && !phone) return null;
+      return {witness_id: wid || null, full_name: name || null, phone: phone || null};
+    }).filter(Boolean);
+  }
+
+  // after a successful save, editing the form means a NEW claim with a new key
+  form.addEventListener('input', ()=>{
+    if(savedClaimId){
+      savedClaimId = null; submissionKey = null;
+      btn.disabled = false; btn.textContent = 'Submit claim';
+    }
+  });
+
+  form.addEventListener('submit', async (e)=>{
+    e.preventDefault();
+    if(btn.disabled) return;
+    errorBox.classList.remove('show');
+    loading.classList.add('show');
+    btn.disabled = true;
+    if(!submissionKey) submissionKey = newKey();
+    const existing = !!val('cf-claimant-id');
+
+    const payload = {
+      submission_key: submissionKey,
+      customer: existing ? {claimant_id: val('cf-claimant-id')} : {
+        full_name: val('cf-name'), phone: val('cf-phone'), address: val('cf-address'), date_of_birth: val('cf-dob'),
+      },
+      policy: {policy_number: val('cf-policy-number'), premium: val('cf-premium'), start_date: val('cf-start'), end_date: val('cf-end')},
+      claim: {amount: val('cf-amount'), category: val('cf-category'), incident_date: val('cf-incident-date'), description: val('cf-description')},
+      vehicle: {vehicle_id: val('cf-vehicle-id'), vin: val('cf-vin'), plate_number: val('cf-plate'), make: val('cf-make'), model: val('cf-model')},
+      garage: {garage_id: val('cf-garage-id'), name: val('cf-garage-name'), phone: val('cf-garage-phone'), address: val('cf-garage-address')},
+      doctor: {doctor_id: val('cf-doctor-id'), full_name: val('cf-doctor-name'), clinic_name: val('cf-doctor-clinic')},
+      witnesses: collectWitnesses(),
+    };
+
+    let res, data;
+    try{
+      res = await fetch(API_BASE + '/api/claims/submit', {
+        method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify(payload),
+      });
+      data = await res.json().catch(()=>({}));
+    }catch(err){
+      // the request may or may not have reached the server; the same key is kept so a retry can't duplicate
+      errorBox.textContent = `Could not reach the API (${err.message}). It is unknown whether the claim was saved — press Submit again; the same submission key is reused, so it will not be saved twice.`;
+      errorBox.classList.add('show');
+      loading.classList.remove('show'); btn.disabled = false;
+      return;
+    }
+    loading.classList.remove('show');
+
+    if(!res.ok || !data.saved){
+      const items = (data.errors || []).map(x=>`<li>${esc(x.message)}</li>`).join('');
+      errorBox.innerHTML = `<strong>Not saved (HTTP ${res.status}).</strong> ${items ? `<ul style="margin:6px 0 0; padding-left:18px;">${items}</ul>` : esc(data.error || 'Request failed')}`;
+      errorBox.classList.add('show');
+      btn.disabled = false;
+      // the server already holds a different claim under this key; the next submit is a new claim
+      if((data.errors || []).some(x=>x.field==='submission_key')) submissionKey = null;
+      return;
+    }
+
+    savedClaimId = data.claim_id;
+    btn.textContent = `Saved as Claim #${data.claim_id} — edit the form to file another`;
+    renderClaimResult(data);
+    try{
+      await loadData();
+      renderDashboard();
+      populateEntityPickers();
+      $('result-refresh').textContent = `Dashboard refreshed from the API: Claim #${data.claim_id} is now in All claims (${summary.total_claims} claims)`
+        + (isSuspicious(claims.find(c=>c.claim_id===data.claim_id) || {}) ? ' and in Suspicious claims.' : '; it is not in Suspicious claims because its recommendation is "' + esc(data.report?.recommendation || '') + '".');
+    }catch(err){
+      $('result-refresh').textContent = 'The claim is saved, but refreshing the dashboard failed: ' + err.message;
+    }
+  });
+
+  async function retryAnalysis(claimId){
+    const b = $('retry-analysis');
+    b.disabled = true; b.textContent = 'Re-running analysis…';
+    try{
+      const res = await fetch(API_BASE + `/api/claims/${claimId}/analyze`, {method:'POST'});
+      const data = await res.json();
+      renderClaimResult(data);
+      await loadData(); renderDashboard();
+    }catch(err){
+      b.disabled = false; b.textContent = 'Retry analysis'; alert(err.message);
+    }
+  }
+
+  function renderClaimResult(d){
+    const r = d.report;
+    const c = r ? r.claim : null;
+    const score = c ? c.risk_score : null;
+    const tier = score == null ? 'mid' : score>=TH().high_risk_threshold ? 'high' : score>=TH().investigation_threshold ? 'mid' : 'low';
+    resultCard.className = 'result-card show tier-' + tier;
+    const saveLine = `<div class="save-banner show" style="margin:0 0 16px;">${d.duplicate ? 'This submission was already received — no second claim was created. ' : ''}
+      Saved to PostgreSQL as <strong>Claim #${d.claim_id}</strong> for <strong>customer #${d.claimant_id}${d.customer_name ? ' — '+esc(d.customer_name) : ''}</strong>
+      ${d.customer_new === true ? '(new customer)' : d.customer_new === false ? '(existing customer)' : ''},
+      policy <strong>${esc(d.policy_number)}</strong>${d.policy_reused === true ? ' (existing policy reused)' : d.policy_reused === false ? ' (new policy)' : ''}.
+      <div id="result-refresh" style="margin-top:6px; opacity:.85;"></div></div>`;
+    const warn = (d.warnings||[]).length ? `<div class="warn-box">${d.warnings.map(esc).join('<br>')}</div>` : '';
+    if(!d.analysis_ok || !r){
+      resultCard.innerHTML = saveLine + warn + `<div class="warn-box"><strong>Claim saved, analysis failed.</strong> ${esc(d.analysis_error || 'Unknown error')}.
+        The claim exists and is listed in All claims as "Analysis pending". Retrying re-runs the analysis only — it never creates another claim.
+        <div class="btn-row"><button class="link-btn" id="retry-analysis">Retry analysis</button></div></div>`;
+      $('retry-analysis').onclick = ()=> retryAnalysis(d.claim_id);
+      return;
+    }
+    const n = r.network;
+    resultCard.innerHTML = saveLine + warn + `
+      <div class="result-head">
+        <div class="result-score"><span class="num display" style="color:${tier==='high'?'var(--clay)':tier==='mid'?'var(--amber)':'var(--teal)'}">${score}</span><span class="of100">/ 100 risk score</span></div>
+        <div class="result-status ${r.recommendation===REC.NONE ? 'cool' : 'hot'}">${esc(r.recommendation)}</div>
+      </div>
+      <div class="result-section-title">Why this recommendation</div>
+      <ul class="reason-list">${r.recommendation_reasons.map(x=>`<li>${esc(x)}</li>`).join('')}</ul>
+      <div class="result-stats">
+        <div class="result-stat"><div class="v" style="color:${r.ml.anomaly ? 'var(--clay)' : 'var(--teal)'}">${mlText(r.ml)}</div><div class="l">Isolation Forest (unusualness, not fraud)</div></div>
+        <div class="result-stat"><div class="v">${n.size}</div><div class="l">Claims in network (incl. this) · ${n.direct_claim_ids.length} direct, ${n.indirect_claim_ids.length} indirect</div></div>
+        <div class="result-stat"><div class="v">${r.ml.score ?? '—'}</div><div class="l">Anomaly score (anomalous if &gt; ${r.ml.threshold ?? '—'})</div></div>
+      </div>
+      <div class="result-section-title">Factor breakdown</div>
+      ${renderBreakdown(r.risk)}
+      <div class="result-section-title">This claim's shared entities</div>
+      <ul class="evidence-list">${entityItems(n.direct_shared_entities, c.claim_id)}</ul>
+      <div class="result-section-title">Network graph ${n.size>1 ? `— ${esc(n.network_id)}` : ''}</div>
+      <div id="result-graph" class="graph-box"></div>
+      ${graphLegend()}
+      <div class="result-section-title">Connected claims</div>
+      ${connectedRows(n.connected_claims)}
+      <div class="btn-row">
+        <button class="link-btn" id="res-all">Open in All claims</button>
+        <button class="link-btn" id="res-ev">Open investigation report</button>
+      </div>`;
+    try { renderEntityGraph($('result-graph'), n.graph, c.claim_id); } catch(e) { console.error('graph render failed', e); }
+    $('res-all').onclick = ()=> showInAllClaims(c.claim_id);
+    $('res-ev').onclick = ()=> showClaimEvidence(c.claim_id);
+    resultCard.scrollIntoView({behavior:'smooth', block:'nearest'});
+  }
+}
+initClaimForm();
+
+// ---------- boot ----------
+(async function init(){
+  try{
+    await loadData();
+    renderDashboard();
+    window.populateEntityPickers && window.populateEntityPickers();
+  }catch(err){
+    console.error(err);
+    document.getElementById('last-run').textContent = 'API unreachable';
+    document.querySelector('.main').insertAdjacentHTML('afterbegin', `
+      <div class="panel" style="border-color:var(--clay); margin-bottom:20px;">
+        <h2 style="color:var(--clay);">Couldn't reach the API</h2>
+        <p class="sub">${esc(err.message)}. Confirm the Flask backend is running and reachable at
+        <span class="mono">${esc(API_BASE)}</span>, and that CORS is enabled. If it's on a different
+        host or port, open this page with <span class="mono">?api=http://host:port</span> appended to the URL.</p>
+      </div>`);
+  }
+})();
+</script>
+</body>
+</html>
